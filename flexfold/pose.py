@@ -37,16 +37,16 @@ class PoseTracker(nn.Module):
             pass
         else:
             if self.trans is not None:
-                trans_emb = nn.Embedding(self.trans.shape[0], 2, sparse=True)
+                trans_emb = nn.Embedding(self.trans.shape[0], 2, sparse=False)
                 trans_emb.weight.data.copy_(self.trans)
                 self.trans_emb = trans_emb
             else:
                 self.trans_emb = None
             if emb_type == "s2s2":
-                rots_emb = nn.Embedding(self.rots.shape[0], 6, sparse=True)
+                rots_emb = nn.Embedding(self.rots.shape[0], 6, sparse=False)
                 rots_emb.weight.data.copy_(lie_tools.SO3_to_s2s2(self.rots))
             elif emb_type == "quat":
-                rots_emb = nn.Embedding(self.rots.shape[0], 4, sparse=True)
+                rots_emb = nn.Embedding(self.rots.shape[0], 4, sparse=False)
                 rots_emb.weight.data.copy_(lie_tools.SO3_to_quaternions(self.rots))
             else:
                 raise RuntimeError("Embedding type {} not recognized".format(emb_type))

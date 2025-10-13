@@ -26,8 +26,7 @@ import cryodrgn
 from cryodrgn import utils, config
 from cryodrgn.commands import backproject_voxel
 from flexfold import analysis
-import pandas as pd
-
+from flexfold.core import plot_loss
 logger = logging.getLogger(__name__)
 
 
@@ -505,82 +504,6 @@ class VolumeGenerator:
         analysis.gen_volumes(self.weights, self.config, zfile, outdir, **self.vol_args)
 
 
-def parse_lightning_csv(path):
-    df = pd.read_csv(path)
-
-    # Always keep step + epoch columns if present
-    base_cols = [c for c in ["step", "epoch"] if c in df.columns]
-
-    # Classify metrics
-    step_metrics  = [c for c in df.columns if c.endswith("_step")]
-    epoch_metrics = [c for c in df.columns if c.endswith("_epoch")]
-
-    # Separate val vs train
-    val_step_cols   = [c for c in step_metrics if c.startswith("val")]
-    train_step_cols = [c for c in step_metrics if c not in val_step_cols]
-
-    val_epoch_cols   = [c for c in epoch_metrics if c.startswith("val")]
-    train_epoch_cols = [c for c in epoch_metrics if c not in val_epoch_cols]
-
-    # Build DataFrames (dropping rows where all relevant metrics are NaN)
-    train_step_df  = df[base_cols + train_step_cols].dropna(how="all", subset=train_step_cols).reset_index(drop=True)
-    train_epoch_df = df[base_cols + train_epoch_cols].dropna(how="all", subset=train_epoch_cols).reset_index(drop=True)
-    val_step_df    = df[base_cols + val_step_cols].dropna(how="all", subset=val_step_cols).reset_index(drop=True)
-    val_epoch_df   = df[base_cols + val_epoch_cols].dropna(how="all", subset=val_epoch_cols).reset_index(drop=True)
-
-    return train_step_df, train_epoch_df, val_step_df, val_epoch_df
-
-def plot_loss(infile, outfile):
-    train_step, train_epoch, val_step, val_epoch = parse_lightning_csv(infile)
-
-    movavg = lambda arr,w: np.convolve(
-        np.nan_to_num(arr), np.ones(w), 'valid'
-    ) / np.convolve(~np.isnan(arr), np.ones(w), 'valid')
-    movavg_step = lambda arr,w: arr[:-(w-1)]*(len(arr)/(len(arr)-w))
-
-    losses=["data_loss", "chi_loss", "viol_loss","pose_rot", "kld", "loss", "scale_loss"]
-    col = "tab:blue"
-    valcol = "tab:green"
-    nrows = 2
-    ncols=4
-    fig, ax = plt.subplots(nrows,ncols, figsize=(20,10), layout="constrained")
-    for x in range(nrows):
-        for y in range(ncols):
-            ii = x *ncols + y
-            if ii>=len(losses):
-                break
-
-            print(losses[ii])
-
-            if not losses[ii]+"_step" in train_step:
-                break
-
-            loss = train_step[losses[ii]+"_step"]
-            step = train_step["step"] * (train_step["epoch"].max() - train_step["epoch"].min()) / (train_step["step"].max() - train_step["step"].min())
-            if len(step)>50:
-                w = min(len(step)//10,10)
-                ax[x,y].plot(step, loss, alpha=0.5, c=col)
-                ax[x,y].plot(movavg_step(step,w), movavg(loss,w), label = "training", c=col)
-            else:
-                ax[x,y].plot(step, loss, label = "training", c=col)
-
-            ax[x,y].set_xlabel("epoch")
-            ax[x,y].set_ylabel(losses[ii])
-
-            if ("val_" + losses[ii]+"_epoch") in val_epoch:
-                loss = val_epoch["val_" +losses[ii]+"_epoch"]
-                step = val_epoch["epoch"]
-                if len(step)>50:
-                    w = min(len(step)//10,10)
-                    ax[x,y].plot(step, loss, alpha=0.5, c=valcol)
-                    ax[x,y].plot(movavg_step(step,w), movavg(loss,w), label = "validation", c=valcol)
-                else:
-                    ax[x,y].plot(step, loss, label = "validation", c=valcol)
-
-    ax[0,0].legend()
-    fig.savefig(outfile, dpi=300)
-
-    plt.close(fig)
 
 def main(args: argparse.Namespace) -> None:
     matplotlib.use("Agg")  # non-interactive backend

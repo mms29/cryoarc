@@ -62,7 +62,8 @@ from pytorch_lightning.strategies import DDPStrategy
 from scipy.ndimage import gaussian_filter
 from flexfold.core import ifft2_center, unsymmetrize_ht, rotmat_angle_deg
 from torch.optim.lr_scheduler import LambdaLR
-from flexfold.lora import apply_lora_config_to_model, lora_light
+from flexfold.lora import apply_lora_config_to_model, lora_light, full_no_angle
+from flexfold.core import plot_loss
 
 def pad_to_max(tensor, max_size):
     pad_size = max_size - tensor.size(0)
@@ -205,6 +206,9 @@ def add_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--lora_structure_module", action="store_true", help="TODO"
+    )
+    parser.add_argument(
+        "--frozen_angle", action="store_true", help="TODO"
     )
     parser.add_argument(
         "--poses", type=os.path.abspath, required=True, help="Image poses (.pkl)"
@@ -421,6 +425,12 @@ def add_args(parser: argparse.ArgumentParser) -> None:
         type=float,
         default=3e-4,
         help="Learning rate for pose optimizer (default: %(default)s)",
+    )
+    group.add_argument(
+        "--pose-wd",
+        type=float,
+        default=1e-4,
+        help="Weight decay for pose optimizer (default: %(default)s)",
     )
 
     group = parser.add_argument_group("Encoder Network")
@@ -664,6 +674,9 @@ class LitHetOnlyVAE(pl.LightningModule):
         if self.args.lora_structure_module:
             self.model = apply_lora_config_to_model(self.model, lora_light)
 
+        if self.args.frozen_angle:
+            self.model = apply_lora_config_to_model(self.model, full_no_angle)
+
         if self.domain == "real":
             self.model.enc_mask = None
 
@@ -691,7 +704,7 @@ class LitHetOnlyVAE(pl.LightningModule):
         }
 
         if self.args.do_pose_sgd : 
-            pose_optimizer = torch.optim.SparseAdam(self.posetracker.parameters(), lr=self.args.pose_lr)
+            pose_optimizer = torch.optim.Adam(self.posetracker.parameters(), lr=self.args.pose_lr, weight_decay=self.args.pose_wd)
             return [optimizer, pose_optimizer], [scheduler]
         
         else:
@@ -736,13 +749,12 @@ class LitHetOnlyVAE(pl.LightningModule):
 
         return y, y_real, rot, tran, c
     
-    def write_debug(self, struct, mask, y, y_real, y_recon, y_recon_real, global_it, sigma=1.0):
+    def write_debug(self, struct, mask, y, y_real, y_recon, global_it, sigma=1.0):
         """
-        y : ?
+        y : [B, D, D, 2] Real
         y_real :[B, D-1, D-1] Real
 
-        y_recon : [B, D, D] FT complex
-        y_recon_real :[B, D-1, D-1] Real
+        y_recon : [B, maskD] FT complex or [B, D-1, D-1] Real
         """
         logger.info("Writing debug PNG at iteration %i"%global_it)
         D = self.lattice.D
@@ -755,6 +767,17 @@ class LitHetOnlyVAE(pl.LightningModule):
         masked_overlay[(mask == 0).detach().cpu().numpy()] = [0, 0, 0, 1]   # Black with full opacity
         masked_overlay[(mask == 1).detach().cpu().numpy()] = [0, 0, 0, 0]   # Fully transparent
         masked_overlay = masked_overlay.reshape((D,D,4))
+
+        if args.domain_loss =="real":
+            y_recon_real = y_recon
+        else:
+            y_recon_real = torch.zeros(B, D, D, 2, device=y.device)
+            y_recon_real = torch.view_as_complex(y_recon_real)
+            y_recon_real = y_recon_real.view(B,-1)
+            y_recon_real[:,mask] = y_recon[:B]
+            y_recon_real = y_recon_real.reshape(B, D, D)
+            y_recon_real = unsymmetrize_ht(y_recon_real)
+            y_recon_real = ifft2_center(y_recon_real).real
 
         for i in range(B):
             #filter
@@ -827,21 +850,25 @@ class LitHetOnlyVAE(pl.LightningModule):
             raise RuntimeError("Unknown decoder type:%s"%( type(self.model.decoder).__name__))
 
         # Apply CTF
+        #[B, maskN] complex64
         y_recon = y_recon.view(B, -1)
         if c is not None:
             y_recon *= c.view(B, -1)[:, mask]
 
-        # Pad mask with 0
-        tmp = y_recon
-        y_recon = torch.zeros((B, D*D), dtype=y_recon.dtype, device=y_recon.device)
-        y_recon[:, mask] = tmp[:]
+        if args.domain_loss == "real":
+            # Pad mask with 0
+            tmp = y_recon
+            y_recon = torch.zeros((B, D*D), dtype=y_recon.dtype, device=y_recon.device)
+            y_recon[:, mask] = tmp[:]
 
-        # Real space
-        y_recon_real = y_recon.reshape(B, D,D)
-        y_recon_real = unsymmetrize_ht(y_recon_real)
-        y_recon_real = ifft2_center(y_recon_real).real
+            # Real space
+            y_recon = y_recon.reshape(B, D,D)
+            y_recon = unsymmetrize_ht(y_recon)
+    
+            #[B, D-1, D-1] float32
+            y_recon = ifft2_center(y_recon).real
 
-        return y_recon, y_recon_real, mask, struct
+        return y_recon, mask, struct
 
 
     def training_step(self, batch, batch_idx):
@@ -873,11 +900,11 @@ class LitHetOnlyVAE(pl.LightningModule):
         z = self.model.reparameterize(z_mu, z_logvar)
 
         # Decoder
-        y_recon,y_recon_real, mask, struct = self.run_decoder(z,rot, c)
+        y_recon, mask, struct = self.run_decoder(z,rot, c)
 
         # Write debug
         if self.args.debug and self.trainer.is_global_zero and ((global_it)%100 == 0  or batch_idx ==0):
-            self.write_debug(struct, mask, y, y_real, y_recon, y_recon_real, global_it)
+            self.write_debug(struct, mask, y, y_real, y_recon, global_it)
 
         # Computing loss
         loss, gen_loss, kld = self.loss_function(
@@ -886,11 +913,13 @@ class LitHetOnlyVAE(pl.LightningModule):
             y,
             y_real,
             y_recon,
-            y_recon_real,
             mask,
             beta,
             struct=struct
         )
+        if args.do_pose_sgd:
+            dummy = (self.posetracker.trans_emb.weight.sum() +self.posetracker.rots_emb.weight.sum() )* 0
+            loss = loss + dummy
 
         # Backward pass
         self.manual_backward(loss)
@@ -939,8 +968,8 @@ class LitHetOnlyVAE(pl.LightningModule):
         self.val_z_idx.append(idx)
 
         if dataloader_idx == 0 :
-                y_recon,y_recon_real, mask, struct = self.run_decoder(z_mu,rot, c)
-                gen_loss, total_gen_loss = self.gen_loss(y, y_real, y_recon, y_recon_real, mask, struct)
+                y_recon, mask, struct = self.run_decoder(z_mu,rot, c)
+                gen_loss, total_gen_loss = self.gen_loss(y, y_real, y_recon, mask, struct)
 
                 self.log("val_loss", total_gen_loss.item(), prog_bar=False, sync_dist=True, on_epoch=True, on_step=True, add_dataloader_idx=False)
                 for k,v in gen_loss.items():
@@ -996,18 +1025,20 @@ class LitHetOnlyVAE(pl.LightningModule):
             out_weights = "{}/weights.{}.pkl".format(self.args.outdir, self.current_epoch)
             save_checkpoint(self.model, self.optimizers(), self.current_epoch, z_mu.detach().cpu().numpy(), z_logvar.detach().cpu().numpy(), out_weights, out_z)
 
-    def gen_loss(self, y, y_real, y_recon,y_recon_real, mask, struct):
+            if os.path.exists(self.args.outdir+"/metrics.csv"):
+                plot_loss(self.args.outdir+"/metrics.csv", self.args.outdir+"/metrics.png")
+
+    def gen_loss(self, y, y_real, y_recon, mask, struct):
         # Reconstruction loss
         if args.domain_loss =="real":
-            data_loss = torch.mean(1-get_cc(y_real, y_recon_real))
+            corr = get_cc(y_real, y_recon)
         else:
             B = y.size(0)
             D = y.size(-2)
-
             y = y.view(B, D*D, 2)[:, mask]
-            y_recon = y_recon[:, mask]
             corr = fourier_corr(torch.view_as_complex(y), y_recon)
-            data_loss = torch.mean(1 - corr)
+            
+        data_loss = torch.mean(1 - corr)
 
         # Struct violations loss
         struct_violations = find_structural_violations(
@@ -1064,14 +1095,13 @@ class LitHetOnlyVAE(pl.LightningModule):
             y,
             y_real,
             y_recon,
-            y_recon_real,
             mask,
             beta,
             struct,
         ):
 
         # total of data loss and structural contraints
-        gen_loss, total_gen_loss = self.gen_loss(y, y_real, y_recon, y_recon_real, mask, struct)
+        gen_loss, total_gen_loss = self.gen_loss(y, y_real, y_recon, mask, struct)
 
         # latent loss
         kld = torch.mean(

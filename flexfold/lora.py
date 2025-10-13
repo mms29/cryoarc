@@ -10,6 +10,29 @@ FROZEN = 0
 LORA = 1
 FULL = 2
 
+full_no_angle= {
+    "structure_module":{
+        "linear_in" : FULL,#,147.84 K
+        "ipa.linear_q" :FULL,#, 73.92 K
+        "ipa.linear_q_points.linear" :FULL,#, 55.44 K
+        "ipa.linear_kv" : FULL,#,147.84 K
+        "ipa.linear_kv_points.linear" : FULL,#,166.32 K
+        "ipa.linear_b": FULL,#,: 1.55 K
+        "ipa.linear_out" : FULL,#,811.39 K
+        "transition.layers.0.linear_1" : FULL,#,147.84 K
+        "transition.layers.0.linear_2" : FULL,#,147.84 K
+        "transition.layers.0.linear_3" : FULL,#,147.84 K
+        "bb_update.linear": FULL,#,: 2.31 K
+        "angle_resnet.linear_in" :FROZEN,#, 49.28 K
+        "angle_resnet.linear_initial" :FROZEN,#, 49.28 K
+        "angle_resnet.layers.0.linear_1" :FROZEN,#, 16.51 K
+        "angle_resnet.layers.0.linear_2" :FROZEN,#, 16.51 K
+        "angle_resnet.layers.1.linear_1" :FROZEN,#, 16.51 K
+        "angle_resnet.layers.1.linear_2" :FROZEN,#, 16.51 K
+        "angle_resnet.linear_out": FROZEN,#, : 1.81 K
+    }
+}
+
 lora_light = {
     "structure_module":{
         "linear_in" : LORA,#,147.84 K
