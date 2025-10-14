@@ -126,8 +126,9 @@ def main(args: argparse.Namespace) -> None:
     zdim = cfg["model_args"]["zdim"]
     norm = [float(x) for x in cfg["dataset_args"]["norm"]]
 
-    mask_real = spherical_soft_mask(D-1,radius=0.75, edge=0.25, device=device)
-    mask_ft = fourier_mask(D-1, device=device)
+    # mask_real = spherical_soft_mask(D-1,radius=0.45, edge=0.05, device=device)
+    # mask_ft = fourier_mask(D-1, device=device)
+    mask_real = None
     mask_ft = None
 
     if args.drgn : 
@@ -157,7 +158,8 @@ def main(args: argparse.Namespace) -> None:
             if not args.drgn : 
                 vol= shift(vol, -np.ones(3)*0.5)
             vol =  torch.tensor(vol).to(device)
-            vol*= mask_real
+            if mask_real is not None:
+                vol*= mask_real
             apix = header.apix
 
             #GT PDB
@@ -172,7 +174,8 @@ def main(args: argparse.Namespace) -> None:
                 if args.drgn : 
                     v = model.decoder.eval_volume(lattice.coords, lattice.D, lattice.extent, norm,z[i])
                     v = v.to(device)
-                    v[v<0.0] =0.0
+                    # v[v<0.0] =0.0 #FIXME
+                    v += v.min()#FIXME
 
                 else:
                     v,s = model.decoder.eval_volume(lattice.coords, D-1, None, None,z[i])
@@ -180,7 +183,8 @@ def main(args: argparse.Namespace) -> None:
 
                 # Volume FSC
                 dt = time.time()
-                v*= mask_real
+                if mask_real is not None:
+                    v*= mask_real
                 fsc_curve,freqs = fourier_shell_correlation(v,vol,mask_ft, apix=apix)
                 auc = fsc_auc(fsc_curve,freqs )
                 res_05, res_0143 = fsc_thresh(fsc_curve,freqs )
@@ -188,7 +192,6 @@ def main(args: argparse.Namespace) -> None:
                 if args.debug:
                     write_mrc(outdir + "/debug_%s_pred.mrc"%str(i+1).zfill(6),v.cpu() )
                     write_mrc(outdir + "/debug_%s_gt.mrc"%str(i+1).zfill(6),vol.cpu() )
-                    write_mrc(outdir + "/debug_%s_mask.mrc"%str(i+1).zfill(6),mask_real.cpu() )
                 timings ["fsc"] += time.time()-dt
 
                 dt = time.time()

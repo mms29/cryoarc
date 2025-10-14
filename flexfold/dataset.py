@@ -107,51 +107,31 @@ class ImageDataset(torch.utils.data.Dataset):
     def estimate_normalization(self, n=1000):
         n = min(n, self.N) if n is not None else self.N
         indices = range(0, self.N, self.N // n)  # FIXME: what if the data is not IID??
-
-        imgs = torch.stack([fft.ht2_center(img) for img in self.src.images(indices)])
-        if self.invert_data:
-            imgs *= -1
-
-        imgs = fft.symmetrize_ht(imgs)
-        norm = (0, torch.std(imgs))
-        logger.info("Normalizing HT by {} +/- {}".format(*norm))
-
+        norm = (0, self.src.images(indices).std())
         return norm
 
     def _process(self, data):
+        #Add bath dim
         if data.ndim == 2:
             data = data[np.newaxis, ...]
+
+        #Window
         if self.window is not None:
             data *= self.window
 
-        data = fft.ht2_center(data)
+        # Invert
         if self.invert_data:
             data *= -1
-        data = fft.symmetrize_ht(data)
-        data = (data - self.norm[0]) / self.norm[1]
-        return data
 
-    def _process_ft(self, data):
-        if data.ndim == 2:
-            data = data[np.newaxis, ...]
-        if self.window is not None:
-            data *= self.window
+        # FT
+        data_ft = fft.fft2_center(data)
+        data_ft = fft.symmetrize_ht(data_ft)
 
-        data = fft.fft2_center(data)
-        if self.invert_data:
-            data *= -1
-        data = fft.symmetrize_ht(data)
-        data = (data - self.norm[0]) / self.norm[1]
-        return data
+        #Normalize
+        data /= self.norm[1]
+        data_ft /= (self.norm[1] * self.D) # std(X) = std(x) * sqrt(D*D)
+        return data, data_ft
 
-    def _process_real(self, data):
-        if data.ndim == 2:
-            data = data[np.newaxis, ...]
-        if self.invert_data:
-            data *= -1
-        data = (data - self.norm[0]) / self.norm[1]
-        return data
-    
     def __len__(self):
         return self.N
 
@@ -161,30 +141,9 @@ class ImageDataset(torch.utils.data.Dataset):
 
         imgs = self.src.images(index)
 
-        particles_real = self._process_real(imgs)
-        particles = self._process_ft(imgs)
-        if self.domain=="hartley":
-            raise
-        #     particles = self._process(imgs)
-        # elif self.domain=="fourier":
-        # else:
-        #     particles=None
+        particles_real, particles_ft = self._process(imgs)
 
-        # this is why it is tricky for index to be allowed to be a list!
-        if len(particles_real.shape) == 2:
-            particles_real = particles_real[np.newaxis, ...]
-            if particles is not None:
-                particles = particles[np.newaxis, ...]
-
-        if isinstance(index, (int, np.integer)):
-            logger.debug(f"ImageDataset returning images at index ({index})")
-        else:
-            logger.debug(
-                f"ImageDataset returning images for {len(index)} indices:"
-                f" ({index[0]}..{index[-1]})"
-            )
-
-        return particles, particles_real, index
+        return particles_ft, particles_real, index
 
     def get_slice(
         self, start: int, stop: int
@@ -324,16 +283,10 @@ class _DataShufflerIterator:
         # merge the batch dimension
         particles = particles.view(-1, *particles.shape[2:])
 
-        particles_real = self.dataset._process_real(particles)
-        if self.dataset.domain=="hartley":
-            particles = self.dataset._process(particles)
-        elif self.dataset.domain=="fourier":
-            particles = self.dataset._process_ft(particles)
-        else:
-            particles=None
+        particles_real, particles_ft = self.dataset._process(particles)
 
         # print('ZZZ', particles.shape, tilt_indices.shape, particle_indices.shape)
-        return particles, particles_real, particle_indices
+        return particles_ft, particles_real, particle_indices
 
 
 def make_dataloader(

@@ -44,7 +44,7 @@ from pytorch_lightning.strategies import DDPStrategy
 from openfold.utils.loss import fape_loss, compute_renamed_ground_truth
 from torch.utils.data import Dataset, DataLoader
 
-from scripts.train import LitDataModule,LitHetOnlyVAE, save_checkpoint, save_config, add_args
+from flexfold.scripts.train import LitDataModule,LitHetOnlyVAE, save_checkpoint, save_config, add_args
 from pytorch_lightning.plugins.environments import MPIEnvironment
 
 logger = logging.getLogger(__name__)

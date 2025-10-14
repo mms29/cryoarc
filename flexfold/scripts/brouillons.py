@@ -426,98 +426,97 @@ def vol_from_coords(coords, coef):
     vol = vol_real_mask(crd=crd, pix_loc=pix_loc, pix_mask=pix_mask, grid_size=100, sigma=1.0, pixel_size=1.0, coef=coef)
     return vol[-1]
 
-from Bio.PDB import PDBParser, Superimposer, is_aa
-import numpy as np
-from flexfold.core import vol_real_mask, get_voxel_mask,atomdefs
-from flexfold.fsc import fourier_shell_correlation, fsc_thresh
-from cryodrgn.mrcfile import parse_mrc, write_mrc
+
+
+
+
 import matplotlib.pyplot as plt
-from matplotlib.ticker import FuncFormatter
+import numpy as np
 import torch
-from scipy.ndimage import shift
-rundir = "/home/vuillemr/flexfold/data/cryofold/AKMD/snr1/run/debug/debug_%s" %str(20).zfill(6)
+from cryodrgn.utils import load_pkl
+from umap import UMAP
+from sklearn.decomposition import PCA
+
+base_dirs=[
+"/home/vuillemr/flexfold/data/cryofold/AKMD/snr1",
+"/home/vuillemr/flexfold/data/cryofold/AKMD/snr0.1",
+# "/home/vuillemr/flexfold/data/cryofold/AKMD/snr0.01",
+"/home/vuillemr/flexfold/data/cryofold/AKMD/snr0.005",
+"/home/vuillemr/flexfold/data/cryofold/AKMD/snr0.001"]
+
+noise_levels = [1.0,0.1,0.00316227,0.001]
+
+methods=["run", "run_conv_sgd", "run_cryodrgn", "run_cryodrgn_sgd"]
+analysis=["analysis", "analysis", "analyze.100", "analyze.100"]
 
 
+##################### 
+# COnformatinoal space
+#####################
 
-gt_vol,_ = parse_mrc(rundir+"_gt.mrc")
-pred_vol,_ = parse_mrc(rundir+"_pred.mrc")
-pred_vol = shift(pred_vol, np.ones(3)*0.5)
-fsc1, freqs = fourier_shell_correlation(torch.tensor(gt_vol), torch.tensor(pred_vol))
-res = fsc_thresh(fsc, freqs)
-write_mrc(rundir + "_pred_shift.mrc", pred_vol)
-print("MRC RESOLUTION %.2f Ang (%.2f Ang)"%(res))
+data_umap = []
+data_pca = []
+for i, (basedir, noise) in enumerate(zip(base_dirs, noise_levels)):
+    for j, m in enumerate(methods):
+        filename = basedir + "/" + m + "/z.99.pkl"
+        print(filename)
+        z = load_pkl(filename)
+        # dimred = UMAP(n_components=2, n_neighbors=50, min_dist=0.1)
+        # data_umap.append(dimred.fit_transform(z)[:,:2])
+        dimred = PCA(n_components=2)
+        data_pca.append(dimred.fit_transform(z)[:,:2])
 
-# PARSE
-parser = PDBParser(QUIET=True)
-gt_structure = parser.get_structure("gt",rundir+"_gt.pdb")
-pred_structure = parser.get_structure("pred",rundir+"_pred.pdb")
-
-# GET INITIAL PDBs
-gt_coef = get_coef(gt_structure)
-pred_coef = get_coef(pred_structure)
-gt_atoms = get_atom_coords(gt_structure)
-gt_ca = get_ca_atoms(gt_structure)
-gt_ca_atoms = np.array([a.get_coord() for a in gt_ca])
-pred_atoms = get_atom_coords(pred_structure)
-pred_ca = get_ca_atoms(pred_structure)
-pred_ca_atoms = np.array([a.get_coord() for a in pred_ca])
-
-gt_vol = vol_from_coords(gt_atoms, gt_coef)
-pred_vol = vol_from_coords(pred_atoms, pred_coef)
-fsc, freqs = fourier_shell_correlation(gt_vol, pred_vol)
-res = fsc_thresh(fsc, freqs)
-print("PDB RESOLUTION %.2f Ang (%.2f Ang)"%(res))
-
-
-translation = gt_atoms.mean(axis=0) - pred_atoms.mean(axis=0)
-for atom in pred_structure.get_atoms():
-    atom.coord = atom.coord + translation
-pred_atoms = get_atom_coords(pred_structure)
-pred_ca = get_ca_atoms(pred_structure)
-pred_ca_atoms = np.array([a.get_coord() for a in pred_ca])
-
-gt_vol = vol_from_coords(gt_atoms, gt_coef)
-pred_vol = vol_from_coords(pred_atoms, pred_coef)
-fsc, freqs = fourier_shell_correlation(gt_vol, pred_vol)
-res = fsc_thresh(fsc, freqs)
-print("PDB RESOLUTION %.2f Ang (%.2f Ang)"%(res))
+data=data_pca
+nrows = len(base_dirs)
+ncols = len(methods)
+cmap = "plasma"
+c = np.repeat(np.arange(100), 100)
+fig, ax = plt.subplots(nrows, ncols, figsize=(ncols*4, nrows*3), layout="constrained")  
+for i, (basedir, noise) in enumerate(zip(base_dirs, noise_levels)):
+    for j, m in enumerate(methods):
+        ind = ncols*i + j
+        ax[i,j].scatter(data[ind][:,0],data[ind][:,1], c=c, cmap=cmap, s=2.0, alpha=0.5)
+        ax[i,j].set_title("%s - SNR=%s"%(m,str(noise)))
+fig.savefig("/home/vuillemr/flexfold/data/cryofold/AKMD/summary_pca.png", dpi=300)
 
 
-sup = Superimposer()
-sup.set_atoms(gt_ca, pred_ca)  # This aligns atoms2 onto atoms1
-rot, tran= sup.rotran
-sup.rms
-sup.apply(pred_structure.get_atoms())
-
-pred_atoms = get_atom_coords(pred_structure)
-pred_ca = get_ca_atoms(pred_structure)
-pred_ca_atoms = np.array([a.get_coord() for a in pred_ca])
-
-gt_vol = vol_from_coords(gt_atoms, gt_coef)
-pred_vol = vol_from_coords(pred_atoms, pred_coef)
-fsc, freqs = fourier_shell_correlation(gt_vol, pred_vol)
-res = fsc_thresh(fsc, freqs)
-print("PDB RESOLUTION %.2f Ang (%.2f Ang)"%(res))
-
-
-write_mrc(rundir + "gt_test.mrc",gt_vol)
-write_mrc(rundir + "pred_test.mrc", pred_vol)
-
-res1 = res[1]
-res5 = res[0]
-fig, ax = plt.subplots(1,1)
-ax.plot(freqs,fsc)
-ax.plot(freqs,fsc1)
+##################### 
+# FSC
+#####################
+from matplotlib.ticker import FuncFormatter
 def fraction_formatter(x, pos):
     if x == 0:
         return "0"
     return f"1/{x**-1:.1f}"   # reciprocal with 2 decimal places
-ax.xaxis.set_major_formatter(FuncFormatter(fraction_formatter))
-ax.axhline(0.143, c="red")
-ax.axhline(0.5, c="green")
-ax.axvline(1/res1, c="red")
-ax.axvline(1/res5, c="green")
-ax.set_xlabel("Resolution ($1/\AA$)")
-ax.set_ylabel("Fourier Shell Correlation")
-fig.savefig(rundir+"assert_fsc.png")
-plt.close(fig)
+
+fig, ax = plt.subplots(1, len(noise_levels), figsize=(10,2.5), layout="constrained")
+for i, (basedir, noise) in enumerate(zip(base_dirs, noise_levels)):
+    for j, (m, a) in enumerate(zip(methods, analysis)):
+        filename = basedir + "/" + m + "/" + a + "/assert.pkl"
+        assert_dict = load_pkl(filename)
+        # ax[i].errorbar(x=assert_dict["pixres"], y=np.mean(assert_dict["fsc"],axis=0), yerr=np.std(assert_dict["fsc"],axis=0),
+        #                label=m)
+        ax[i].plot(assert_dict["pixres"], np.mean(assert_dict["fsc"],axis=0), label=m)
+    ax[i].set_title("SNR=%s"%str(noise))
+    # ax[i].set_xscale("log")
+    ax[i].xaxis.set_major_formatter(FuncFormatter(fraction_formatter))
+    ax[i].set_xlabel("Resolution ($1/\AA$)")
+    ax[i].set_ylabel("Fourier Shell Correlation")
+    ax[i].set_ylim(0,1.05)
+    ax[i].axhline(0.143, ls="--", color="grey", alpha=0.5)
+ax[i].legend(loc="upper center")
+fig.savefig("/home/vuillemr/flexfold/data/cryofold/AKMD/summary_fsc.png", dpi=300)
+
+
+fig, ax = plt.subplots(1, len(noise_levels), figsize=(10,5), layout="constrained")
+for i, (basedir, noise) in enumerate(zip(base_dirs, noise_levels)):
+    for j, (m, a) in enumerate(zip(methods, analysis)):
+        filename = basedir + "/" + m + "/" + a + "/assert.pkl"
+        assert_dict = load_pkl(filename)
+        ax[i].bar(j, np.mean(assert_dict["auc"]),yerr=np.std(assert_dict["auc"]), label=m, error_kw={"capsize":6})
+    ax[i].set_title("SNR=%s"%str(noise))
+    ax[i].set_xticks(np.arange(len(methods)))
+    ax[i].set_xticklabels(methods, rotation=-45,ha='left', rotation_mode='anchor')
+    ax[i].set_ylabel("FSC AUC")
+    ax[i].set_ylim(0.05,0.3)
+fig.savefig("/home/vuillemr/flexfold/data/cryofold/AKMD/summary_fscauc.png", dpi=300)

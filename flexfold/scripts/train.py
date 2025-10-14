@@ -711,7 +711,7 @@ class LitHetOnlyVAE(pl.LightningModule):
             return [optimizer], [scheduler]
         
     def prepare_batch(self, batch):
-        particles, particles_real, ind = batch
+        particles_ft, particles_real, ind = batch
         B = ind.size(0)
         D = self.lattice.D
 
@@ -721,19 +721,9 @@ class LitHetOnlyVAE(pl.LightningModule):
         # Image
         y_real = self.lattice.translate_real(particles_real, tran.unsqueeze(1)).view(B, D-1, D-1)
         y_real = y_real.transpose(-1,-2)
-        y_real=y_real.contiguous()
+        # y_real=y_real.contiguous()
 
-        y = self.lattice.translate_ft(torch.view_as_real(particles).view(B, D*D, 2), tran.unsqueeze(1)).view(B, D, D, 2)
-
-        if self.domain == "hartley":
-            raise 
-        # if self.domain == "fourier":
-        #     y = self.lattice.translate_ft(torch.view_as_real(particles).view(B, D*D, 2), tran.unsqueeze(1)).view(B, D, D, 2)
-        #     # y_real = ifft2_center(torch.view_as_complex(y)).real
-        # elif self.domain == "hartley":
-        #     y = self.lattice.translate_ht(particles.view(B, -1), tran.unsqueeze(1)).view(B, D, D)
-        #     # y_real = fft.iht2_center(y)
-        # elif self.domain == "real":
+        y = self.lattice.translate_ft(torch.view_as_real(particles_ft).view(B, D*D, 2), tran.unsqueeze(1)).view(B, D, D, 2)
         
         # CTF
         if self.ctf_params is not None:
@@ -778,6 +768,11 @@ class LitHetOnlyVAE(pl.LightningModule):
             y_recon_real = y_recon_real.reshape(B, D, D)
             y_recon_real = unsymmetrize_ht(y_recon_real)
             y_recon_real = ifft2_center(y_recon_real).real
+
+            y_real = torch.view_as_complex(y)
+            y_real = unsymmetrize_ht(y_real)
+            y_real = ifft2_center(y_real).real
+
 
         for i in range(B):
             #filter
@@ -895,7 +890,7 @@ class LitHetOnlyVAE(pl.LightningModule):
 
         # Encdoer
         z_mu, z_logvar = self.run_encoder(y,y_real, c)
-
+        
         # Reparametrize latent space
         z = self.model.reparameterize(z_mu, z_logvar)
 
