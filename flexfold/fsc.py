@@ -323,7 +323,7 @@ def fsc_auc(fsc, freqs):
     return torch.trapz(fsc, freqs).item()
 
 def fsc_thresh(fsc, freqs):
-    return (1/freqs[fsc<0.5].min()).item(), (1/freqs[fsc<0.143].min()).item()
+    return (1/freqs[fsc>=0.5].max()).item(), (1/freqs[fsc>=0.143].max()).item()
 
 
 def fourier_mask(D, cutoff=0.45, smooth_width=0.05, device="cpu"):
