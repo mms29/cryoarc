@@ -229,9 +229,21 @@ def get_sphere(angular_dist):
         angles[i] = matrix2euler(R)
     return angles
 
-def get_sphere_full(angular_dist):
-    n_zviews = 360 // angular_dist
+def get_sphere_near(angular_dist, near_angle, near_angle_cutoff):
     angles = get_sphere(angular_dist)
+    angles_final = [near_angle]
+
+    for i in range(len(angles)):
+        if get_angular_distance(near_angle, angles[i]) < near_angle_cutoff:
+            angles_final.append(angles[i])
+    return np.array(angles_final)
+
+def get_sphere_full(angular_dist, near_angle=None, near_angle_cutoff=None):
+    n_zviews = 360 // angular_dist
+    if near_angle is not None:
+        angles = get_sphere_near(angular_dist, near_angle, near_angle_cutoff)
+    else:
+        angles = get_sphere(angular_dist)
     num_pts = len(angles)
     new_angles = np.zeros((num_pts * n_zviews, 3))
     for i in range(num_pts):
@@ -249,48 +261,119 @@ def get_angular_distance(a1, a2):
     cosTheta = np.clip(cosTheta, -1.0, 1.0) 
     return    np.rad2deg(np.arccos(cosTheta))
 
-def get_corr_ft(v1, v2):
-    corr = fft.ifftn_center(v1 * v2.conj()).real
-    flat_index = corr.argmax()
-    index = np.unravel_index(flat_index.item(), v1.shape)
-    return corr.max(), index
+def get_corr_ft(v1, v2,v2_sum2):
+    corr = ifft3center(v1 * v2.conj()).real
+    denom = torch.sqrt(torch.sum(torch.abs(v1) ** 2, dim=(-1,-2,-3))* v2_sum2)
+    corr /= denom[..., None, None, None]
+
+    B = corr.shape[0]
+    corr_flat = corr.view(B, -1)
+    corr_max, flat_index = corr_flat.max(dim=1)
+    max_idx = torch.stack(torch.unravel_index(flat_index, corr.shape[1:]), dim=1)
+    return corr_max, max_idx
 
 
-def register_crd_to_vol(vol, crd, grid_size, sigma, pixel_size, dist_search = 15, real_space=True, quality_ratio=5.0):
-    angles = get_sphere_full(int(dist_search))
-    cc=torch.zeros(len(angles), dtype=crd.dtype, device=crd.device)
-    shifts=torch.zeros((len(angles),3), dtype=crd.dtype, device=crd.device)
+def fft3center(x):
+    dim =  (-1,-2,-3)
+    return fft.fftshift(fft.fftn(fft.fftshift(x, dim=dim), dim=dim), dim=dim)
 
+def ifft3center(x):
+    dim =  (-1,-2,-3)
+    return fft.fftshift(fft.ifftn(fft.fftshift(x, dim=dim), dim=dim), dim=dim)
+
+def register_crd_to_vol_iter(crd, vol, angles, chunksize, quality_ratio, sigma, pixel_size, grid_size, real_space):
+    device = crd.device
     n_pix_cutoff=int(np.ceil(quality_ratio * sigma / pixel_size) * 2 + 1)    
+    n_angles = angles.shape[0]
+    n_chunk = int(np.ceil(n_angles/chunksize))
 
-    for i,a in tqdm.tqdm(enumerate(angles), "Angular search", len(angles)) :
-        R = euler2matrix(a)
-        c_search = crd @ torch.tensor(R, device=crd.device, dtype=crd.dtype)
+    cc=torch.zeros(len(angles), dtype=crd.dtype, device=device)
+    shifts=torch.zeros((len(angles),3), dtype=crd.dtype, device=device)
 
+    vol_sum2 = torch.sum(torch.abs(vol) ** 2, dim=(-1,-2,-3))
+
+    for i in tqdm.tqdm(range(n_chunk), "Angular search", n_chunk) :
+        min_indice= (i)*chunksize 
+        max_indice= (i+1)*chunksize if (i+1)*chunksize <n_angles else n_angles
+        a = angles[min_indice:max_indice]
+        R = torch.cat([torch.as_tensor(euler2matrix(_a), device=device, dtype=crd.dtype).unsqueeze(0) for _a in a], dim=0)
+
+        # crd : [N,3]
+        # R : [B,3,3]
+        c_search = (crd.unsqueeze(0) @ R.unsqueeze(1)).squeeze(1)
         if real_space:
             vox_loc, vox_mask = get_voxel_mask(c_search, grid_size, pixel_size,  n_pix_cutoff)
-            vol_search_real = vol_real_mask(
-                c_search[None], 
-                vox_loc[None], 
-                vox_mask[None], 
-                grid_size, 
-                sigma, 
-                pixel_size
-            )[-1]
-            vol_search = fft.fftshift(fft.fftn(fft.fftshift(vol_search_real), dim=(-1,-2,-3)))
+            vol_search = fft3center(
+                vol_real_mask(
+                    c_search, 
+                    vox_loc, 
+                    vox_mask, 
+                    grid_size, 
+                    sigma, 
+                    pixel_size
+                )
+            )
         else:
-            vol_search = vol_ft(c_search, grid_size, sigma, pixel_size)
-        corr, shift = get_corr_ft(vol_search, vol)
-        shifts[i] = torch.tensor(shift, device=crd.device, dtype=crd.dtype)
-        cc[i] = corr
+            raise NotImplementedError()
+            # vol_search = vol_ft(c_search, grid_size, sigma, pixel_size)
 
-    angles_final = angles[cc.argmax()]
-    shift_final = (shifts[cc.argmax()] - grid_size/2 + .5)* pixel_size
+        corr, shift = get_corr_ft(vol_search, vol, vol_sum2)
+        shifts[min_indice:max_indice] = shift
+        cc[min_indice:max_indice] = corr
+
+    best_indice= cc.argmax()
+    angles_final = angles[best_indice]
+    shift_final = (shifts[best_indice] - grid_size/2 + .5)* pixel_size
     R_final = torch.tensor(euler2matrix(angles_final), device=crd.device, dtype=crd.dtype)
 
     return angles_final, R_final, shift_final
 
+def register_crd_to_vol(vol, crd, grid_size, sigma, pixel_size, dist_search, real_space=True, quality_ratio=5.0, chunksize="auto"):
+    device = crd.device
 
+    if device.type=="cuda":
+        if chunksize =="auto":
+            free_mem = get_free_mem(crd.device)
+            print("Tuning chunksize ..." )
+            print("\tFREE MEMORY %.2f GB" %(free_mem/1e9))
+            estimated_mem = vol.numel() * vol.element_size() * 10
+            print("\tBATCH MEMORY %.2f MB" %(estimated_mem/1e6))
+            chunksize = int(free_mem/estimated_mem)
+            print("\tCHUNK SIZE %i" %chunksize)
+    else:
+        chunksize=1
+
+    if not (isinstance(dist_search, tuple) or isinstance(dist_search, list)) : 
+        dist_search = (dist_search,)
+
+    angles_final = None
+    for i,d in enumerate(dist_search):
+        print("Angular search %i (distance=%.2f degrees)"%(i,d))
+        angles = get_sphere_full(int(np.floor(d)), near_angle=angles_final, near_angle_cutoff=d*3)
+        angles_final, R_final, shift_final = register_crd_to_vol_iter(
+            crd, 
+            vol, 
+            angles, 
+            chunksize, 
+            quality_ratio, 
+            sigma,
+            pixel_size, 
+            grid_size, 
+            real_space
+        )
+        print("Best angle = %s"%str(angles_final))
+        print("Best shift = %s"%str(shift_final))
+        
+    return angles_final, R_final, shift_final
+
+def get_free_mem(device,memory_fraction=0.9,extra_overhead_gb=1.0):
+    props = torch.cuda.get_device_properties(device)
+    total_mem = props.total_memory
+    reserved = torch.cuda.memory_reserved(device) 
+    allocated = torch.cuda.memory_allocated(device)
+    free_mem = total_mem - max(reserved, allocated) - extra_overhead_gb
+    free_mem *= memory_fraction
+    return free_mem
 
 def lattice_ft_2D(device, grid_size = 128, sigma = 1.0, pixel_size=1.0):
     freqs = torch.fft.fftfreq(grid_size, d=pixel_size, device=device)
@@ -391,12 +474,15 @@ def get_voxel_mask(coord, grid_size, pixel_size, n_pix_cutoff):
     threshold = (n_pix_cutoff - 1) // 2
     circle = get_circle_3D(n_pix_cutoff)  # shape (n_pix, 3)
     circle= circle.to(coord.device)
+
+    if len(coord.shape) ==3:
+        circle = circle[None]
     
     # Compute base pixel positions for all atoms (broadcasting)
     base_pix = torch.floor(coord / pixel_size - threshold + grid_size / 2)  # shape (n_atoms, 3)
     
     # Add circle offsets to each base pixel position
-    pix = base_pix[..., None, :] + circle[None, :, :]  # shape (n_atoms, n_pix, 2)
+    pix = base_pix[..., None, :] + circle[..., None, :, :]  # shape (n_atoms, n_pix, 2)
 
     # Validity mask: check if x and y are in bounds
     valid_x = (pix[..., 0] >= 0) & (pix[..., 0] < grid_size)
@@ -489,6 +575,7 @@ def vol_real_mask(crd, pix_loc, pix_mask, grid_size=128, sigma=1.0, pixel_size=1
     y = flat_idx[..., 1]
     z = flat_idx[..., 2]
     idx = x * (grid_size**2) + y * grid_size + z             # flatten 2D index to 1D
+
 
     # Scatter into flat vol buffer
     I_out = torch.zeros(B, grid_size **3, device=crd.device, dtype=I.dtype)
@@ -585,3 +672,155 @@ def aatype_to_coefs(aatype):
             coef37[a,i] = c 
             
     return coef37
+
+
+
+def dcd2numpyArr(filename):
+    """
+    Read coordinate file (.DCD)
+    :param filename: DCD file
+    :return: coordinates ncoord * n_atoms * 3
+    """
+    print("> Reading dcd file %s" % filename)
+    BYTESIZE = 4
+    with open(filename, 'rb') as f:
+
+        # Header
+        # ---------------- INIT
+
+        start_size = int.from_bytes((f.read(BYTESIZE)), "little")
+        crd_type = f.read(BYTESIZE).decode('ascii')
+        nframe = int.from_bytes((f.read(BYTESIZE)), "little")
+        start_frame = int.from_bytes((f.read(BYTESIZE)), "little")
+        len_frame = int.from_bytes((f.read(BYTESIZE)), "little")
+        len_total = int.from_bytes((f.read(BYTESIZE)), "little")
+        for i in range(5):
+            f.read(BYTESIZE)
+        time_step = np.frombuffer(f.read(BYTESIZE), dtype=np.float32)
+        for i in range(9):
+            f.read(BYTESIZE)
+        charmm_version = int.from_bytes((f.read(BYTESIZE)), "little")
+
+        end_size = int.from_bytes((f.read(BYTESIZE)), "little")
+
+        if end_size != start_size:
+            raise RuntimeError("Can not read dcd file")
+
+        # ---------------- TITLE
+        start_size = int.from_bytes((f.read(BYTESIZE)), "little")
+        ntitle = int.from_bytes((f.read(BYTESIZE)), "little")
+        tilte_rd = f.read(BYTESIZE * 20 * ntitle)
+        try:
+            title = tilte_rd.encode("ascii")
+        except AttributeError:
+            title = str(tilte_rd)
+        end_size = int.from_bytes((f.read(BYTESIZE)), "little")
+
+        if end_size != start_size:
+            raise RuntimeError("Can not read dcd file")
+
+        # ---------------- NATOM
+        start_size = int.from_bytes((f.read(BYTESIZE)), "little")
+        natom = int.from_bytes((f.read(BYTESIZE)), "little")
+        end_size = int.from_bytes((f.read(BYTESIZE)), "little")
+
+        if end_size != start_size:
+            raise RuntimeError("Can not read dcd file")
+
+        # ----------------- DCD COORD
+        dcd_arr = np.zeros((nframe, natom, 3), dtype=np.float32)
+        for i in range(nframe):
+            for j in range(3):
+
+                start_size = int.from_bytes((f.read(BYTESIZE)), "little")
+                while (start_size != BYTESIZE * natom and start_size != 0):
+                    # print("\n-- UNKNOWN %s -- " % start_size)
+
+                    f.read(start_size)
+                    end_size = int.from_bytes((f.read(BYTESIZE)), "little")
+                    if end_size != start_size:
+                        raise RuntimeError("Can not read dcd file")
+                    start_size = int.from_bytes((f.read(BYTESIZE)), "little")
+
+                bin_arr = f.read(BYTESIZE * natom)
+                if len(bin_arr) == BYTESIZE * natom:
+                    dcd_arr[i, :, j] = np.frombuffer(bin_arr, dtype=np.float32)
+                else:
+                    break
+                end_size = int.from_bytes((f.read(BYTESIZE)), "little")
+                if end_size != start_size:
+                    if i > 1:
+                        break
+                    else:
+                        # pass
+                        raise RuntimeError("Can not read dcd file %i %i " % (start_size, end_size))
+
+        print("\t -- Summary of DCD file -- ")
+        print("\t\t crd_type  : %s" % crd_type)
+        print("\t\t nframe  : %s" % nframe)
+        print("\t\t len_frame  : %s" % len_frame)
+        print("\t\t len_total  : %s" % len_total)
+        print("\t\t time_step  : %s" % time_step)
+        print("\t\t charmm_version  : %s" % charmm_version)
+        print("\t\t title  : %s" % title)
+        print("\t\t natom  : %s" % natom)
+    print("\t Done \n")
+
+    return dcd_arr
+
+def numpyArr2dcd(arr, filename, start_frame=1, len_frame=1, time_step=1.0, title=None):
+    """
+    Write coordinate file (.DCD)
+    :param arr: coordinates ncoord * natoms * 3
+    :param filename: DCD file
+    :param start_frame:
+    :param len_frame:
+    :param time_step:
+    :param title:
+    """
+    print("> Wrinting dcd file %s" % filename)
+    BYTESIZE = 4
+    nframe, natom, _ = arr.shape
+    len_total = nframe * len_frame
+    charmm_version = 24
+    if title is None:
+        title = "DCD file generated by AFMfit"
+    ntitle = (len(title) // (20 * BYTESIZE)) + 1
+    with open(filename, 'wb') as f:
+        zeroByte = int.to_bytes(0, BYTESIZE, "little")
+
+        # Header
+        # ---------------- INIT
+        f.write(int.to_bytes(21 * BYTESIZE, BYTESIZE, "little"))
+        f.write(b'CORD')
+        f.write(int.to_bytes(nframe, BYTESIZE, "little"))
+        f.write(int.to_bytes(start_frame, BYTESIZE, "little"))
+        f.write(int.to_bytes(len_frame, BYTESIZE, "little"))
+        f.write(int.to_bytes(len_total, BYTESIZE, "little"))
+        for i in range(5):
+            f.write(zeroByte)
+        f.write(np.float32(time_step).tobytes())
+        for i in range(9):
+            f.write(zeroByte)
+        f.write(int.to_bytes(charmm_version, BYTESIZE, "little"))
+
+        f.write(int.to_bytes(21 * BYTESIZE, BYTESIZE, "little"))
+
+        # ---------------- TITLE
+        f.write(int.to_bytes((ntitle * 20 + 1) * BYTESIZE, BYTESIZE, "little"))
+        f.write(int.to_bytes(ntitle, BYTESIZE, "little"))
+        f.write(title.ljust(20 * BYTESIZE).encode("ascii"))
+        f.write(int.to_bytes((ntitle * 20 + 1) * BYTESIZE, BYTESIZE, "little"))
+
+        # ---------------- NATOM
+        f.write(int.to_bytes(BYTESIZE, BYTESIZE, "little"))
+        f.write(int.to_bytes(natom, BYTESIZE, "little"))
+        f.write(int.to_bytes(BYTESIZE, BYTESIZE, "little"))
+
+        # ----------------- DCD COORD
+        for i in range(nframe):
+            for j in range(3):
+                f.write(int.to_bytes(BYTESIZE * natom, BYTESIZE, "little"))
+                f.write(np.float32(arr[i, :, j]).tobytes())
+                f.write(int.to_bytes(BYTESIZE * natom, BYTESIZE, "little"))
+    print("\t Done \n")

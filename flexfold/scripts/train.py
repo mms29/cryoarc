@@ -31,7 +31,7 @@ import torch.nn as nn
 from torch.nn.parallel import DataParallel
 import torch.nn.functional as F
 from pytorch_lightning.plugins.environments import MPIEnvironment
-
+from functools import partial
 try:
     import apex.amp as amp  # type: ignore  # PYR01
 except ImportError:
@@ -50,20 +50,33 @@ from openfold.utils.loss import fape_loss, compute_renamed_ground_truth, supervi
 import matplotlib.pyplot as plt
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import CSVLogger
+from openfold.model.structure_module import StructureModule
 
 
 from flexfold.lattice import Lattice
 from flexfold import dataset
 
-from flexfold.models import HetOnlyVAE, AFDecoderReal, AFDecoder, struct_to_crd
+from flexfold.models import HetOnlyVAE, AFDecoderReal, AFDecoder, struct_to_crd, EncodeTable
 from flexfold.pose import PoseTracker
 from flexfold.core import vol_real, get_cc, fourier_corr, output_single_pdb, struct_to_pdb,weighted_normalized_l2, gaussian_weight, frequency_weights
-from pytorch_lightning.strategies import DDPStrategy
+from pytorch_lightning.strategies import DDPStrategy, FSDPStrategy
+from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
+from torch.distributed.fsdp import ShardingStrategy, FullyShardedDataParallel as FSDP
 from scipy.ndimage import gaussian_filter
 from flexfold.core import ifft2_center, unsymmetrize_ht, rotmat_angle_deg
 from torch.optim.lr_scheduler import LambdaLR
 from flexfold.lora import apply_lora_config_to_model, lora_light, full_no_angle
 from flexfold.core import plot_loss
+from cryodrgn import lie_tools
+
+def pose_loss_func(rot, rot0, trans, trans0, rot_weight=1.0, trans_weight=1.0):
+    angle_dist_squared = torch.rad2deg(torch.mean(4 * (1 - torch.matmul(rot[..., None, :], rot0[..., :, None])**2 ) ))
+    spatial_dist_squared =  torch.mean(torch.sum((trans-trans0)**2, dim=-1))
+
+    print("Angle = %.2f deg ; Shift = %.2f ang"%(angle_dist_squared.item(), spatial_dist_squared.item()))
+
+    L = rot_weight * angle_dist_squared +  trans_weight *spatial_dist_squared
+    return L
 
 def pad_to_max(tensor, max_size):
     pad_size = max_size - tensor.size(0)
@@ -141,7 +154,7 @@ def add_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--af_checkpoint_path",type=os.path.abspath,required=True, help="TODO",
     )
     parser.add_argument(
-        "--initial_pose_path",type=os.path.abspath,required=True,help="TODO",
+        "--initial_pose_path",type=os.path.abspath,default=None,help="TODO",
     )
     parser.add_argument(
         "--pixel_size", type=float, required=True, help="TODO"
@@ -166,6 +179,9 @@ def add_args(parser: argparse.ArgumentParser) -> None:
     )    
     parser.add_argument(
         "--scale_loss_weight", type=float, default=0.1, help="TODO"
+    )   
+    parser.add_argument(
+        "--pose_loss_weight", type=float, default=0.1, help="TODO"
     )
     parser.add_argument(
         "--viol_loss_weight", type=float, default=1.0, help="TODO"
@@ -176,7 +192,9 @@ def add_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--train_val_ratio", type=float, default=0.9, help="TODO"
     )
-    
+    parser.add_argument(
+        "--val_check_interval", type=int, default=None, help="TODO"
+    )
     parser.add_argument(
         "--all_atom", action="store_true", help="TODO"
     )
@@ -191,6 +209,9 @@ def add_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--devices", type=str, default="auto", help="TODO"
+    )
+    parser.add_argument(
+        "--fsdp",  action="store_true", help="TODO"
     )
     parser.add_argument(
         "--num_nodes", type=int, default=1, help="TODO"
@@ -210,6 +231,10 @@ def add_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--frozen_angle", action="store_true", help="TODO"
     )
+    parser.add_argument(
+        "--no_blocks_sm",  type=int, default=8, help="TODO"
+    )
+    
     parser.add_argument(
         "--poses", type=os.path.abspath, required=True, help="Image poses (.pkl)"
     )
@@ -370,6 +395,12 @@ def add_args(parser: argparse.ArgumentParser) -> None:
         help="Learning rate in Adam optimizer (default: %(default)s)",
     )
     group.add_argument(
+        "--encode_lr",
+        type=float,
+        default=None,
+        help="Learning rate in Adam optimizer (default: %(default)s)",
+    )
+    group.add_argument(
         "--warmup",
         type=int,
         default=10,
@@ -451,7 +482,7 @@ def add_args(parser: argparse.ArgumentParser) -> None:
     group.add_argument(
         "--encode-mode",
         default="resid",
-        choices=("conv", "resid", "mlp", "tilt"),
+        choices=("conv", "table", "mlp", ),
         help="Type of encoder network (default: %(default)s)",
     )
     group.add_argument(
@@ -540,13 +571,11 @@ def save_config(args, dataset, lattice, out_config):
         poses=args.poses,
         do_pose_sgd=args.do_pose_sgd,
     )
-    if args.encode_mode == "tilt":
-        dataset_args["ntilts"] = args.ntilts
 
     lattice_args = dict(D=lattice.D, extent=lattice.extent, ignore_DC=lattice.ignore_DC)
     model_args = dict(
         qlayers=args.qlayers,
-        qdim=args.qdim,
+        qdim=args.qdim if args.encode_mode != "table" else dataset.N,
         players=args.players,
         pdim=args.pdim,
         zdim=args.zdim,
@@ -639,7 +668,7 @@ class LitHetOnlyVAE(pl.LightningModule):
         self.model = HetOnlyVAE(
             self.lattice,
             args.qlayers,
-            args.qdim,
+            args.qdim if args.encode_mode != "table" else Nparticles,
             args.players,
             args.pdim,
             in_dim,
@@ -682,6 +711,8 @@ class LitHetOnlyVAE(pl.LightningModule):
 
         self.model.decoder.globals.use_lma = args.use_lma
 
+        self.model.decoder.structure_module.no_blocks = args.no_blocks_sm
+
         self.automatic_optimization = False
 
         print_model_summary(self)
@@ -689,7 +720,10 @@ class LitHetOnlyVAE(pl.LightningModule):
     def configure_optimizers(self):
 
         optimizer = torch.optim.Adam(
-            self.model.parameters(), lr=self.args.lr,  weight_decay=self.args.wd
+            [
+                {"params" : self.model.encoder.parameters(), "lr":self.args.lr if self.args.encode_lr is None else self.args.encode_lr ,  "weight_decay":self.args.wd},
+                {"params" : self.model.decoder.parameters(), "lr":self.args.lr,  "weight_decay":self.args.wd}
+            ]
         )
         
         def lr_lambda(step):
@@ -721,7 +755,7 @@ class LitHetOnlyVAE(pl.LightningModule):
         # Image
         y_real = self.lattice.translate_real(particles_real, tran.unsqueeze(1)).view(B, D-1, D-1)
         y_real = y_real.transpose(-1,-2)
-        # y_real=y_real.contiguous()
+        y_real=y_real.contiguous()
 
         y = self.lattice.translate_ft(torch.view_as_real(particles_ft).view(B, D*D, 2), tran.unsqueeze(1)).view(B, D, D, 2)
         
@@ -815,20 +849,21 @@ class LitHetOnlyVAE(pl.LightningModule):
             chain_index=struct["asym_id"].detach().cpu().numpy()[-1] if "asym_id" in struct else None,
             file= self.args.outdir + "/debug_%s.pdb"%str(global_it).zfill(5)
         )
-    def run_encoder(self, y, y_real, c=None):
-
-        if self.domain != "real":
-            if self.domain == "fourier":
-                y = (y[...,0] - y[...,1]) 
-            input_ = (y,)
-            if c is not None:
-                input_ = (x * c.sign() for x in input_)  # phase flip by the ctf
+    def run_encoder(self, y, y_real, ind, c=None):
+        if isinstance(self.model.encoder, EncodeTable):
+            input_ = (ind,)
+            
         else:
-            input_ = (y_real,)
+            if self.domain != "real":
+                if self.domain == "fourier":
+                    y = (y[...,0] - y[...,1]) 
+                input_ = (y,)
+                if c is not None:
+                    input_ = (x * c.sign() for x in input_)  # phase flip by the ctf
+            else:
+                input_ = (y_real,)
 
-        z_mu, z_logvar = self.model.encode(*input_)
-
-        return z_mu, z_logvar 
+        return self.model.encode(*input_)
 
     def run_decoder(self, z, rot, c):
         B = z.size(0)
@@ -889,7 +924,7 @@ class LitHetOnlyVAE(pl.LightningModule):
         y, y_real, rot, tran, c = self.prepare_batch(batch)
 
         # Encdoer
-        z_mu, z_logvar = self.run_encoder(y,y_real, c)
+        z_mu, z_logvar = self.run_encoder(y,y_real, batch[-1], c)
         
         # Reparametrize latent space
         z = self.model.reparameterize(z_mu, z_logvar)
@@ -898,7 +933,7 @@ class LitHetOnlyVAE(pl.LightningModule):
         y_recon, mask, struct = self.run_decoder(z,rot, c)
 
         # Write debug
-        if self.args.debug and self.trainer.is_global_zero and ((global_it)%100 == 0  or batch_idx ==0):
+        if self.args.debug  and self.trainer.is_global_zero and ((global_it)%100 == 0  or batch_idx ==0):
             self.write_debug(struct, mask, y, y_real, y_recon, global_it)
 
         # Computing loss
@@ -910,10 +945,14 @@ class LitHetOnlyVAE(pl.LightningModule):
             y_recon,
             mask,
             beta,
-            struct=struct
+            struct=struct,
+            ind = batch[-1]
         )
         if args.do_pose_sgd:
             dummy = (self.posetracker.trans_emb.weight.sum() +self.posetracker.rots_emb.weight.sum() )* 0
+            loss = loss + dummy
+        if args.encode_mode =="table":
+            dummy = self.model.encoder.table.sum() * 0
             loss = loss + dummy
 
         # Backward pass
@@ -956,7 +995,7 @@ class LitHetOnlyVAE(pl.LightningModule):
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
         idx = batch[-1]
         y, y_real, rot, _, c = self.prepare_batch(batch)
-        z_mu, z_logvar = self.run_encoder(y,y_real, c)
+        z_mu, z_logvar = self.run_encoder(y,y_real, batch[-1], c)
 
         self.val_z_mu.append(z_mu)
         self.val_z_logvar.append(z_logvar)
@@ -964,7 +1003,7 @@ class LitHetOnlyVAE(pl.LightningModule):
 
         if dataloader_idx == 0 :
                 y_recon, mask, struct = self.run_decoder(z_mu,rot, c)
-                gen_loss, total_gen_loss = self.gen_loss(y, y_real, y_recon, mask, struct)
+                gen_loss, total_gen_loss = self.gen_loss(y, y_real, y_recon, mask, struct, idx)
 
                 self.log("val_loss", total_gen_loss.item(), prog_bar=False, sync_dist=True, on_epoch=True, on_step=True, add_dataloader_idx=False)
                 for k,v in gen_loss.items():
@@ -1018,12 +1057,12 @@ class LitHetOnlyVAE(pl.LightningModule):
         if self.trainer.is_global_zero: 
             out_z = "{}/z.{}.pkl".format(self.args.outdir, self.current_epoch)
             out_weights = "{}/weights.{}.pkl".format(self.args.outdir, self.current_epoch)
-            save_checkpoint(self.model, self.optimizers(), self.current_epoch, z_mu.detach().cpu().numpy(), z_logvar.detach().cpu().numpy(), out_weights, out_z)
+            save_checkpoint(self.model, self.optimizers(), self.current_epoch, z_mu.detach().cpu().float().numpy(), z_logvar.detach().cpu().float().numpy(), out_weights, out_z)
 
             if os.path.exists(self.args.outdir+"/metrics.csv"):
                 plot_loss(self.args.outdir+"/metrics.csv", self.args.outdir+"/metrics.png")
 
-    def gen_loss(self, y, y_real, y_recon, mask, struct):
+    def gen_loss(self, y, y_real, y_recon, mask, struct, ind):
         # Reconstruction loss
         if args.domain_loss =="real":
             corr = get_cc(y_real, y_recon)
@@ -1058,13 +1097,27 @@ class LitHetOnlyVAE(pl.LightningModule):
         if coef_scale is not None:
             scale_loss = (coef_scale ** 2).sum()
         else:
-            scale_loss = torch.tensor(0.0, device=y.device)
+            scale_loss =  torch.zeros_like(data_loss)
 
         # Center Loss
         # crd = struct_to_crd(struct, ca=not self.model.decoder.all_atom)
         # crd = crd @ self.model.decoder.rot_init + self.model.decoder.trans_init[..., None, :]
         # center_loss = torch.mean(torch.sum((torch.mean(crd, dim=-2) ** 2 ), dim=-1))
         # center_loss = 0.0
+
+
+        if self.args.do_pose_sgd:
+
+            trans0 = self.posetracker.trans[ind]
+            rot0 = lie_tools.SO3_to_quaternions(self.posetracker.rots[ind])
+
+            trans = self.posetracker.trans_emb.weight[ind]
+            rot = self.posetracker.rots_emb.weight[ind]
+
+            pose_loss = pose_loss_func(rot=rot, rot0=rot0, trans=trans, trans0=trans0)
+        else:
+            pose_loss= torch.zeros_like(data_loss)
+
 
         # TOTAL GEN LOSS
         gen_loss = {
@@ -1073,13 +1126,15 @@ class LitHetOnlyVAE(pl.LightningModule):
             "viol_loss": viol_loss,
             # "center_loss": center_loss,
             "scale_loss": scale_loss,
+            "pose_loss": pose_loss,
             }
 
         total_gen_loss = (
             data_loss * self.args.data_loss_weight + 
             chi_loss * self.args.chi_loss_weight +
             viol_loss * self.args.viol_loss_weight +
-            scale_loss * self.args.scale_loss_weight
+            scale_loss * self.args.scale_loss_weight +
+            pose_loss * self.args.pose_loss_weight
         )
         return gen_loss, total_gen_loss
 
@@ -1093,10 +1148,11 @@ class LitHetOnlyVAE(pl.LightningModule):
             mask,
             beta,
             struct,
+            ind
         ):
 
         # total of data loss and structural contraints
-        gen_loss, total_gen_loss = self.gen_loss(y, y_real, y_recon, mask, struct)
+        gen_loss, total_gen_loss = self.gen_loss(y, y_real, y_recon, mask, struct, ind)
 
         # latent loss
         kld = torch.mean(
@@ -1213,10 +1269,10 @@ class LitDataModule(pl.LightningDataModule):
         ]
     
 def main(args: argparse.Namespace) -> None:
+    torch.set_float32_matmul_precision('medium')
     if args.verbose:
         logger.setLevel(logging.DEBUG)
-    torch.autograd.set_detect_anomaly(True)
-    t1 = dt.now()
+
     if args.outdir is not None and not os.path.exists(args.outdir):
         os.makedirs(args.outdir)
 
@@ -1263,8 +1319,13 @@ def main(args: argparse.Namespace) -> None:
         print("Missing keys:", missing)
         print("Unexpected keys:", unexpected)
 
-        # optim = model.configure_optimizers()
-        # optim.load_state_dict(checkpoint["optimizer_state_dict"])
+        try:
+            optim = model.configure_optimizers()
+            optim = optim[0][0] # [opt1, opt2], [scheduler]
+            optimizer_state_dict = checkpoint["optimizer_state_dict"]
+            optim.load_state_dict(optimizer_state_dict)
+        except ValueError:
+            pass
         logger.info("Successfully restored states from {}".format(args.load))
 
     # save configuration
@@ -1285,13 +1346,27 @@ def main(args: argparse.Namespace) -> None:
 
     n_devices = torch.cuda.device_count() if args.devices == "auto" else int(args.devices)
 
-    if n_devices >1:
-        strategy = DDPStrategy(find_unused_parameters=False,
-                                cluster_environment=cluster_environment,
-                                process_group_backend="nccl")
-                                # process_group_backend="gloo")
+
+    if args.fsdp:
+        def name_based_auto_wrap_policy(module, recurse, nonwrapped_numel, **kwargs):
+            return isinstance(module, StructureModule)
+
+        strategy = FSDPStrategy(
+            auto_wrap_policy=name_based_auto_wrap_policy,
+            cpu_offload=False,   # can be True if GPU memory still insufficient
+            sharding_strategy="FULL_SHARD",  # most memory efficient
+            limit_all_gathers=True,
+            use_orig_params=True,
+            cluster_environment=cluster_environment,
+        )
     else:
-        strategy="auto"
+        if n_devices >1:
+            strategy = DDPStrategy(find_unused_parameters=False,
+                                    cluster_environment=cluster_environment,
+                                    process_group_backend="nccl")
+                                    # process_group_backend="gloo")
+        else:
+            strategy="auto"
 
 
     trainer = pl.Trainer(
@@ -1305,7 +1380,15 @@ def main(args: argparse.Namespace) -> None:
         num_nodes = args.num_nodes ,
         logger=CSVLogger(args.outdir, name="", version=""),
         enable_model_summary=True,
+        val_check_interval =args.val_check_interval
     )
+
+    for name, module in model.named_modules():
+        if getattr(module, "_is_fsdp", False):
+            print("✅ FSDP wrapped:", name)
+        else:
+            print("✅ FSDP not wrapped:", name)
+
 
     trainer.fit(model, datamodule=datamodule)
     

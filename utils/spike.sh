@@ -25,7 +25,11 @@ python ./scripts/compute_initial_pose.py $BASE_DIR/initial_pose \
  --alignment_reference data/cryofold/spike-md/test.pdb  --overwrite
 
 
-python -u ./scripts/train.py \
+mpirun --hostfile $OAR_NODEFILE --npernode 3 --prefix /home/vuillemr/.conda/envs/flexfold/ \
+    -x UCX_TLS=shm,self,cuda_copy,dc,rc,ud,gdr_copy,tcp -x PYTHONPATH \
+    --mca plm_rsh_agent "oarsh" --mca pml ucx --mca btl "^tcp,openib,uct" \
+    --np 3 \
+ python -u ./flexfold/scripts/train.py \
   $BASE_DIR/images/snr0.1/particles.mrcs  \
   --poses  $BASE_DIR/particles.pkl\
   --ctf $BASE_DIR/ctf.pkl \
@@ -41,22 +45,19 @@ python -u ./scripts/train.py \
   --num-workers 0 \
   --zdim 2  \
   --enc-dim 16 \
-  --enc-layers 6 \
-  --dec-dim 32 \
+  --enc-layers 1 \
+  --dec-dim 16 \
   --dec-layers 1 \
-  --encode-mode conv\
-  --pair_stack\
-  --frozen_structure_module\
-    --wd 1e-4\
-  --lr 5e-4\
+    --wd 0\
+  --lr 1e-4\
   --warmup 100 \
-  --domain real \
+  --domain fourier \
   --overwrite \
   --multimer \
   --debug \
-  --mpi_plugin\
-  --num_nodes 2\
-  --devices 4\
-  # --encode-mode conv\
-  # --domain real \
-  # --load ~/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run_target/weights.4000.pkl \
+  --train_val_ratio 0.995\
+    --domain_loss fourier\
+    --frozen_angle\
+    --no_blocks_sm 1\
+    --fsdp\
+    --mpi_plugin

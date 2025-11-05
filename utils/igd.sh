@@ -11,9 +11,9 @@ python scripts/run_pretrained_openfold.py  ../cryofold/cryobench_IgD/new_preds  
 
 
 BASE_DIR="../cryofold/cryobench_IgD/IgG-1D/images/snr0.01"
-RUN_DIR=$BASE_DIR/run_target_conv2
+RUN_DIR=$BASE_DIR/run_target_new
 
-python -u ./scripts/train_target.py \
+python -u ./flexfold/scripts/train_target.py \
     $BASE_DIR/sorted_particles.128.txt  \
     --poses  $BASE_DIR/particles.pkl\
     --ctf $BASE_DIR/ctf.pkl \
@@ -28,26 +28,29 @@ python -u ./scripts/train_target.py \
     --batch-size 1  \
     --num-workers 0 \
     --zdim 4  \
-    --enc-dim 32 \
-    --enc-layers 5 \
-    --dec-dim 32 \
-    --dec-layers 4 \
     --domain real \
     --encode-mode conv \
-    --pair_stack \
+    --enc-dim 32 \
+    --enc-layers 5 \
+    --dec-dim 256 \
+    --dec-layers 3 \
     --target_file ~/cryofold/cryobench_IgD/1HZH.cif \
     --overwrite \
     --frozen_structure_module\
     --multimer \
-      --wd 1e-4\
-    --lr 5e-4\
+    --wd 1e-5 \
+    --lr 1e-4 \
+    --chi_loss_weight 0.1\
+    --viol_loss_weight 0.1\
     --warmup 100 \
+    --domain_loss fourier \
+    --multimer \
 #     --use_lma \
 
 
-python ./scripts/compute_initial_pose.py $BASE_DIR/initial_pose_conv \
- --from_aligned_pdb data/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/aligned_target_conv.pdb \
- --alignment_reference data//cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run_target_conv/fit.37.pdb  --overwrite
+python ./flexfold/scripts/compute_initial_pose.py $BASE_DIR/initial_pose_new \
+ --from_aligned_pdb data/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/target_fit_new_100.pdb \
+ --alignment_reference data//cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run_target_new_unfrozen/fit.100.pdb  --overwrite
 
 
 

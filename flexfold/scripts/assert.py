@@ -19,6 +19,8 @@ import os
 import glob
 import time
 from scipy.ndimage import shift
+from flexfold.models import map_sequences     
+from Bio.SeqUtils import seq1
 
 def add_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
@@ -57,6 +59,12 @@ def add_args(parser: argparse.ArgumentParser) -> None:
         help="TODO",
     ) 
     parser.add_argument(
+        "--n_expand",
+        type=int,
+        default=100,
+        help="TODO",
+    ) 
+    parser.add_argument(
         "--skip",
         type=int,
         default=100,
@@ -66,16 +74,41 @@ def add_args(parser: argparse.ArgumentParser) -> None:
 
 def aligned_rmsd(structure1, structure2):
     def get_ca_atoms(structure):
-        atoms = []
+        atoms = {}
+        chainres = {}
         for model in structure:
             for chain in model:
+                atoms[chain.id] = []
+                chainres[chain.id] = ""
+
                 for residue in chain:
                     if is_aa(residue, standard=False) and "CA" in residue:
-                        atoms.append(residue["CA"])
-        return atoms
+                        atoms[chain.id].append(residue["CA"])
+                        chainres[chain.id] += seq1(residue.get_resname(), custom_map={"MSE": "M", "SEP": "S"}) 
+        return atoms, chainres
 
-    atoms1 = get_ca_atoms(structure1)
-    atoms2 = get_ca_atoms(structure2)
+    def map_res_chains(structure1, structure2):
+        atoms1, chain_seq1 = get_ca_atoms(structure1)
+        atoms2, chain_seq2 = get_ca_atoms(structure2)
+
+        mapping = [map_sequences(s1, s2) for s1,s2 in zip(chain_seq1.values(), chain_seq2.values())]
+        print("Mapped chains : ", len(mapping))
+        print("Mapped atoms : ",sum([len(i) for i in mapping]))
+
+        atoms1_mapped = [list(atoms1.values())[c][i] for c,m in enumerate(mapping) for i,v in enumerate(m) if v!=-1 ]
+        atoms2_mapped = [list(atoms2.values())[c][v] for c,m in enumerate(mapping) for i,v in enumerate(m) if v!=-1 ]
+
+        seq1_mapped = "".join([list(chain_seq1.values())[c][i] for c,m in enumerate(mapping) for i,v in enumerate(m) if v!=-1 ])
+        seq2_mapped = "".join([list(chain_seq2.values())[c][v] for c,m in enumerate(mapping) for i,v in enumerate(m) if v!=-1 ])
+
+        n_atoms = sum([len(i) for i in mapping])
+        n_match = sum([i==j for i,j in zip(seq1_mapped,seq2_mapped)])
+
+        assert n_match/n_atoms >0.9
+
+        return atoms1_mapped, atoms2_mapped
+
+    atoms1, atoms2 = map_res_chains(structure1, structure2)
 
     # Superimpose and calculate RMSD
     sup = Superimposer()
@@ -93,19 +126,16 @@ def main(args: argparse.Namespace) -> None:
     if not os.path.isdir(outdir):
         os.mkdir(outdir)
 
-    n_gt = 100
-    n_expand = 100
+    n_expand = args.n_expand
     gt_vols = list(glob.glob(args.gt_vols.strip("'")))
     gt_vols.sort() 
+    n_gt = len(gt_vols)
 
     print("==== Arguments readout : ==== ")
     print("-> run_dir ", args.run_dir)
     print("-> outdir ", args.outdir)
     print("-> drgn ", args.drgn)
     print("-> gt_vols : %s ..."%str(gt_vols[:2]))
-
-
-    assert len(gt_vols)== n_gt
 
     outputs = {
         "fsc": [],

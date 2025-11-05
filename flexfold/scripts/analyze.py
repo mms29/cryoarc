@@ -151,7 +151,7 @@ def analyze_z1(z, outdir, vg):
 
 def run_backproject(particles, poses, ctf, outdir, indices, no_fsc):
 
-    args = [particles, "--poses", poses, "--ctf", ctf,"-o", outdir, "--ind", indices]
+    args = [particles, "--poses", poses, "--ctf", ctf,"-o", outdir, "--ind", indices, "--lazy"]
     if no_fsc : 
         args+= ["--no-half-maps", "--no-fsc-vals"]
     parser = argparse.ArgumentParser()

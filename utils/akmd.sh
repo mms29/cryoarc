@@ -173,3 +173,21 @@ python ./scripts/train.py $BASE_DIR/Particles/particles.mrcs \
   --frozen_angle\
   --viol_loss_weight 0.1\
   --chi_loss_weight 0.1\
+
+
+BASE_DIR="/home/vuillemr/flexfold/data/cryofold/AKMD/snr1"
+
+
+conda activate drgnai
+RUN_DIR=$BASE_DIR/run_drgnai
+drgnai setup $RUN_DIR --particles $BASE_DIR/Particles/particles.mrcs  \
+    --pose $BASE_DIR/particles.pkl \
+    --ctf $BASE_DIR/ctf.pkl \
+    --capture-setup spa\
+    --reconstruction-type het \
+    --pose-estimation refine \
+    --conf-estimation autodecoder
+drgnai train $RUN_DIR
+
+conda activate flexfold
+python ./flexfold/scripts/drgnai_assert.py -i $RUN_DIR/out -o $RUN_DIR --gt_pdbs "$BASE_DIR/../pdbs/*pdb" --gt_vols "$BASE_DIR/../vols128/*mrc" --epoch 99

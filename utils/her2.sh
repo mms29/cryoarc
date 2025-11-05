@@ -8,3 +8,45 @@ python flexfold/scripts/run_pretrained_openfold.py  ../cryofold/HER2/sequence/  
                                   --jax_param_path /home/vuillemr/openfold/openfold/resources/params/params_model_1_multimer_v3.npz\
                                           --output_dir data/cryofold/HER2/pred          --embeddings_output_path data/cryofold/cryobench_IgD/pred/embeddings.pt  \
                                               --use_precomputed_alignments data/cryofold/HER2/pred/alignments/      --data_random_seed 42
+
+# Metadata handling
+BASE_DIR="/home/vuillemr/cryofold/HER2/data/"
+python ./flexfold/scripts/rln2xmp.py $BASE_DIR/*.star $BASE_DIR/particles.xmd
+cd $BASE_DIR
+xmipp_image_convert -i particles.xmd -o particles.mrcs --save_metadata_stack particles_restack.xmd --keep_input_columns 
+python ./flexfold/scripts/rln2xmp.py  $BASE_DIR/particles_restack.xmd $BASE_DIR/particles.star --inverse --optics_group_from $BASE_DIR/J503_csparc2star-particles.star \
+ --add_missing_cols_from $BASE_DIR/J503_csparc2star-particles.star --pixel_size 1.16 --dimension 280
+
+
+# Convert metadata
+cryodrgn parse_ctf_star $BASE_DIR/particles.star -o $BASE_DIR/ctf.pkl
+cryodrgn parse_pose_star $BASE_DIR/particles.star -o $BASE_DIR/particles.pkl
+# Convert metadata
+cryodrgn parse_ctf_star $BASE_DIR/particles_100K.star -o $BASE_DIR/ctf_100K.pkl
+cryodrgn parse_pose_star $BASE_DIR/particles_100K.star -o $BASE_DIR/particles_100K.pkl
+
+# Backproject for verification
+cryodrgn backproject_voxel $BASE_DIR/particles.mrcs --poses $BASE_DIR/particles.pkl --ctf $BASE_DIR/ctf.pkl -o $BASE_DIR/backproject --lazy 
+
+
+# Cryodrgn
+RUN_DIR=$BASE_DIR/run_cryodrgn_sgd
+cryodrgn train_vae $BASE_DIR/particles.mrcs  \
+    --poses $BASE_DIR/particles.pkl \
+    --ctf $BASE_DIR/ctf.pkl \
+    --lazy\
+    -n 4 \
+    -o $RUN_DIR \
+    --batch-size 96  \
+    --num-workers 0 \
+    --zdim 4  \
+    --enc-dim 256 \
+    --enc-layers 3 \
+    --dec-dim 256 \
+    --dec-layers 3 \
+    --domain hartley \
+    --do-pose-sgd \
+    --pretrain 2
+
+RUN_DIR=$BASE_DIR/run
+python ./flexfold/scripts/analyze.py  -o $RUN_DIR/analysis $RUN_DIR 0 --pc 2 

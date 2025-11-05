@@ -110,7 +110,7 @@ class DummyDataset(Dataset):
         super().__init__()
 
     def __len__(self):
-        return 100  # Only one element total
+        return 1000  # Only one element total
 
     def __getitem__(self, idx):
         return torch.empty(0)
@@ -145,8 +145,36 @@ def main(args: argparse.Namespace) -> None:
     dummydatamodule.setup()
     datamodule = LitDataModule(args)
     datamodule.setup()
-    # load model ------------------------------------------------------------------------------------------------------------------------
+    # load model ----------------------------------------------------------------------
+    # --------------------------------------------------
     model = LitTarget(args, datamodule.imageDataset.D, datamodule.imageDataset.N)
+    if args.load:
+        logger.info("Loading checkpoint from {}".format(args.load))
+        checkpoint = torch.load(args.load)
+        # filter unwanted keys
+        exclude_prefixes = [
+            "lattice",
+            "decoder.embeddings",
+        ]
+        exclude_exact = {"decoder.rot_init", "decoder.trans_init"}
+
+        filtered_state_dict = {
+            k: v for k, v in checkpoint["model_state_dict"].items()
+            if not any(k.startswith(p) for p in exclude_prefixes)
+            and k not in exclude_exact
+        }
+
+        # now load
+        missing, unexpected = model.model.load_state_dict(filtered_state_dict, strict=False)
+        print("Missing keys:", missing)
+        print("Unexpected keys:", unexpected)
+
+        optim = model.configure_optimizers()
+        optim = optim[0][0]# if isinstance(optim, (list, tuple)) else optim
+        optimizer_state_dict = checkpoint["optimizer_state_dict"]
+        optim.load_state_dict(optimizer_state_dict)
+        logger.info("Successfully restored states from {}".format(args.load))
+
 
     cluster_environment = MPIEnvironment() if args.mpi_plugin else None
 
@@ -174,7 +202,7 @@ def main(args: argparse.Namespace) -> None:
         logger=CSVLogger(args.outdir, name="", version="")
     )
 
-    trainer.fit(model, datamodule=dummydatamodule, ckpt_path=args.load)
+    trainer.fit(model, datamodule=dummydatamodule)
 
 
 

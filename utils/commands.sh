@@ -631,3 +631,13 @@ cryodrgn train_vae $BASE_DIR/Particles/particles.mrcs  \
     --dec-layers 3 \
 cryodrgn analyze -o $RUN_DIR/analysis $RUN_DIR 49 --pc 2
 
+
+BASE_DIR="../cryofold/cryobench_IgD/IgG-1D/images/snr0.01"
+
+python ./flexfold/scripts/compute_initial_pose.py $BASE_DIR/test --backproject_path data/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/backproject/backproject.mrc\
+  --embedding_pdb_path data/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run_target/fit.4000.pdb  --overwrite
+
+BASE_DIR="/home/vuillemr/cryofold/HER2/data/"
+
+python ./flexfold/scripts/compute_initial_pose.py $BASE_DIR/test --backproject_path $BASE_DIR/backproject/backproject.mrc\
+  --embedding_pdb_path $BASE_DIR/run_target_no_embedder/fit.99.pdb  --overwrite

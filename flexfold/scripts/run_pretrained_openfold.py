@@ -58,6 +58,8 @@ from openfold.data import mmcif_parsing
 from openfold.data.data_pipeline import add_assembly_features, make_sequence_features, convert_monomer_features
 from openfold.model.model import AlphaFold
 from flexfold.core import output_single_pdb
+from flexfold.models import get_target_feats
+
 
 TRACING_INTERVAL = 50
 
@@ -283,7 +285,7 @@ def main(args):
             '`openfold_checkpoint_path` was specified, but no OpenFold checkpoints are available for multimer mode')
 
     ###################################################
-    config.data.common.max_recycling_iters = 20
+    config.data.common.max_recycling_iters = args.max_recycling_iters
 
     model_generator = load_models_from_command_line(
         config,
@@ -325,14 +327,18 @@ def main(args):
                 feature_dict, mode='predict', is_multimer=is_multimer
             )
 
-            # target_feats = get_target_feats("../cryofold/cryobench_IgD/1HZH.cif", data_processor)
-            # model.__class__ = AlphaFoldTargeted
-            # model.target_pos = torch.as_tensor(target_feats["all_atom_positions"], device=args.model_device)
-
+            
             processed_feature_dict = {
                 k: torch.as_tensor(v, device=args.model_device)
                 for k, v in processed_feature_dict.items()
             }
+
+            if args.target_file is not None:
+                embeddings = tensor_tree_map(lambda x: x[..., -1].detach().cpu(),processed_feature_dict)
+                target_feats = get_target_feats(args.target_file, embeddings)
+                model.__class__ = AlphaFoldTargeted
+                model.target_pos = torch.as_tensor(target_feats["all_atom_positions"], device=args.model_device)
+
 
             if args.trace_model:
                 if rounded_seqlen > cur_tracing_interval:
@@ -454,7 +460,7 @@ class AlphaFoldTargeted(AlphaFold):
                     _recycle=(num_iters > 1)
                 )
                 
-                fileout = "data/cryofold/cryobench_IgD/test/predictions/iter%s_pred.pdb"%str(num_recycles+1).zfill(3)
+                fileout = "data/cryofold/HER2/pred/iter%s_pred.pdb"%str(num_recycles+1).zfill(3)
                 output_single_pdb(
                     all_atom_positions = outputs["final_atom_positions"].detach().cpu().numpy(),
                     aatype=feats["aatype"].detach().cpu().numpy(), 
@@ -463,15 +469,7 @@ class AlphaFoldTargeted(AlphaFold):
                     chain_index=feats["asym_id"].detach().cpu().numpy(), 
                     residue_index=feats["residue_index"].detach().cpu().numpy()
                     )
-                fileout = "data/cryofold/cryobench_IgD/test/predictions/iter%s_prev.pdb"%str(num_recycles+1).zfill(3)
-                output_single_pdb(
-                    all_atom_positions = target_pos.detach().cpu().numpy(),
-                    aatype=feats["aatype"].detach().cpu().numpy(), 
-                    all_atom_mask= outputs["final_atom_mask"].detach().cpu().numpy(), 
-                    file=fileout, 
-                    chain_index=feats["asym_id"].detach().cpu().numpy(), 
-                    residue_index=feats["residue_index"].detach().cpu().numpy()
-                    )
+                
                 num_recycles += 1
 
                 if not is_final_iter:
@@ -490,55 +488,6 @@ class AlphaFoldTargeted(AlphaFold):
         outputs.update(self.aux_heads(outputs))
 
         return outputs
-
-
-
-def get_target_feats(mmcif_file,data_processor):
-
-    with open(mmcif_file, 'r') as f:
-        mmcif_string = f.read()
-
-    mmcif_object = mmcif_parsing.parse(
-        file_id="1HZH", mmcif_string=mmcif_string
-    )
-
-    # Crash if an error is encountered. Any parsing errors should have
-    # been dealt with at the alignment stage.
-    if mmcif_object.mmcif_object is None:
-        raise list(mmcif_object.errors.values())[0]
-
-    mmcif_object = mmcif_object.mmcif_object
-
-    all_chain_features = {}
-    for chain_id, seq in mmcif_object.chain_to_seqres.items():
-        desc= "_".join([mmcif_object.file_id, chain_id])
-        input_sequence = mmcif_object.chain_to_seqres[chain_id]
-        num_res = len(input_sequence)
-
-        mmcif_feats = {}
-
-        mmcif_feats.update(
-            make_sequence_features(
-                sequence=input_sequence,
-                description=desc,
-                num_res=num_res,
-            )
-        )
-        mmcif_feats.update(data_processor.get_mmcif_features(mmcif_object, chain_id))
-
-        mmcif_feats = convert_monomer_features(
-            mmcif_feats,
-            chain_id=desc
-        )
-
-        all_chain_features[desc] = mmcif_feats
-
-    all_chain_features = add_assembly_features(all_chain_features)
-
-    merge_feats = {}
-    for f in ["asym_id","all_atom_positions","all_atom_mask","residue_index","aatype"]:
-        merge_feats[f] = np.concatenate([v[f] for k,v in all_chain_features.items()], axis=0)
-    return merge_feats
 
 
 if __name__ == "__main__":
@@ -639,6 +588,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--embeddings_output_path", type=str, default=None,
         help="TODO"
+    )
+
+    parser.add_argument(
+        "--target_file", type=str, default=None, help="TODO"
+    )
+    parser.add_argument(
+        "--max_recycling_iters", type=int, default=20, help="TODO"
     )
     
     add_data_args(parser)

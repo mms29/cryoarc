@@ -3,7 +3,7 @@ import torch
 import argparse
 from flexfold.models import struct_to_crd
 from cryodrgn.mrcfile import write_mrc, parse_mrc
-from flexfold.core import vol_real, vol_ft, register_crd_to_vol,matrix2euler, struct_to_pdb
+from flexfold.core import vol_real, vol_ft, register_crd_to_vol,matrix2euler, struct_to_pdb, get_free_mem
 import torch
 from openfold.utils.tensor_utils import tensor_tree_map
 
@@ -75,27 +75,36 @@ def main(args):
     # METHOD 1 ------------------------------------------------------------------------
             embeddings = torch.load(args.embedding_path, map_location=device)
             crd = embeddings["final_atom_positions"]
-            crd = struct_to_crd(embeddings, ca=True)
+            crd = struct_to_crd(embeddings, ca=args.ca_only)
 
+        crd = crd.type(torch.float32)
+        crd_mean = crd.mean(dim=0)
+        crd-= crd_mean
 
         if args.dist_search == -1:
             R_final = torch.eye(3, device=crd.device, dtype=crd.dtype)
             shift_final = torch.zeros(3, device=crd.device, dtype=crd.dtype)
             angle_final = torch.zeros(3, device=crd.device, dtype=crd.dtype)
         else:
+            # Parse MRC
             vol_ext, header = parse_mrc(args.backproject_path)
-            vol_ext = torch.tensor(vol_ext).to(device)
+            vol_ext = torch.tensor(vol_ext).to(device).type(torch.float32)
             vol_ext = fft.fftn_center(vol_ext)
             assert(vol_ext.shape[-1] == vol_ext.shape[-2] == vol_ext.shape[-3])
+
+            # register coordinates to volume
             angle_final, R_final, shift_final = register_crd_to_vol(
                 vol = vol_ext,
                 crd=crd, 
-                grid_size=vol_ext.shape[-1], 
+                grid_size=header.N, 
                 sigma=args.sigma, 
-                pixel_size=args.pixel_size, 
-                dist_search = args.dist_search,
-                real_space = args.real_space
+                pixel_size= header.apix  if args.pixel_size is None else args.pixel_size, 
+                dist_search = tuple(args.dist_search),
+                real_space = not args.fourier,
+                chunksize="auto"
             )
+
+            shift_final= - (shift_final.flip(0)) - (crd_mean @ R_final)
 
     torch.save({"R": R_final, "T":shift_final}, outfile)
 
@@ -116,7 +125,7 @@ def main(args):
     else:
         if args.embedding_pdb_path:
             for atom in structure.get_atoms():
-                atom.coord = atom.coord @ R_final.cpu().numpy() + shift_final.cpu().numpy()
+                atom.coord = (atom.coord)@ R_final.cpu().numpy() + shift_final.cpu().numpy()
 
             # Save the transformed structure
             io = PDBIO()
@@ -136,12 +145,12 @@ if __name__ == "__main__":
     parser.add_argument( "--backproject_path", type=str,help="")
     parser.add_argument( "--embedding_path", type=str,help="")
     parser.add_argument( "--embedding_pdb_path", type=str,help="")
-    parser.add_argument( "--dist_search", type=float,help="")
-    parser.add_argument( "--grid_size", type=int,help="")
-    parser.add_argument( "--pixel_size", type=float,help="")
-    parser.add_argument( "--sigma", type=float,help="")
+    parser.add_argument( "--dist_search", nargs="+", type=float, default=(20,10,5,3,2), help="Angular search in degrees.")
+    parser.add_argument( "--pixel_size", type=float,default=None,help="")
+    parser.add_argument( "--sigma", type=float,default=1.0, help="")
     parser.add_argument( "--overwrite",  action="store_true")
-    parser.add_argument( "--real_space",  action="store_true")
+    parser.add_argument( "--fourier",  action="store_true")
+    parser.add_argument( "--ca_only", action="store_true", help="TODO")
 
     parser.add_argument( "--from_aligned_pdb", type=str,help="", default=None)
     parser.add_argument( "--alignment_reference", type=str,help="", default=None)

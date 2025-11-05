@@ -10,6 +10,7 @@ from cryodrgn import fft, lie_tools
 import cryodrgn.config
 
 from openfold.model.structure_module import StructureModule
+from flexfold.structure_module import StructureModuleCheckpoint
 from openfold.utils.feats import (
     atom14_to_atom37,
 )
@@ -42,9 +43,9 @@ from openfold.data import mmcif_parsing
 from openfold.data.data_pipeline import add_assembly_features, make_sequence_features, convert_monomer_features
 from openfold.data.data_pipeline import  DataPipelineMultimer, DataPipeline
 
-from typing import Any, Tuple, List, Callable, Optional
-import torch
-import torch.utils.checkpoint
+import itertools
+from flexfold.structure_module import checkpoint_blocks
+
 
 NUM_RES = "num residues placeholder"
 embeddings_keys = {
@@ -109,6 +110,8 @@ class HetOnlyVAE(nn.Module):
                 zdim * 2,
                 activation,  # nlayers  # hidden_dim  # out_dim
             )
+        elif encode_mode == "table":
+            self.encoder  = EncodeTable(qdim, zdim)
         else:
             raise RuntimeError("Encoder mode {} not recognized".format(encode_mode))
         self.encode_mode = encode_mode
@@ -201,11 +204,14 @@ class HetOnlyVAE(nn.Module):
         return eps * std + mu
 
     def encode(self, *img) -> Tuple[Tensor, Tensor]:
-        img = (x.view(x.shape[0], -1) for x in img)
-        if self.enc_mask is not None:
-            img = (x[:, self.enc_mask] for x in img)
-        z = self.encoder(*img)
-        return z[:, : self.zdim], z[:, self.zdim :]
+        if isinstance(self.encoder, EncodeTable):
+            return  self.encoder(*img)
+        else:
+            img = (x.view(x.shape[0], -1) for x in img)
+            if self.enc_mask is not None:
+                img = (x[:, self.enc_mask] for x in img)
+            z = self.encoder(*img)
+            return z[:, : self.zdim], z[:, self.zdim :]
 
     def cat_z(self, coords, z) -> Tensor:
         """
@@ -575,7 +581,13 @@ def get_afdecoder(
 ):
     embeddings = torch.load(embedding_path,map_location="cpu")
 
-    initial_pose = torch.load(initial_pose_path)
+    if initial_pose_path is not None:
+        initial_pose = torch.load(initial_pose_path)
+    else:
+        initial_pose= {
+            "R":torch.eye(3, dtype=torch.float32),
+            "T":torch.zeros(3, dtype=torch.float32)
+        }
 
     print("\nSuccessfully loaded %s"%initial_pose_path)
     print("Rotation : ")
@@ -599,7 +611,7 @@ def get_afdecoder(
 
     afdecoder_args = {
         "config": config,
-        "embeddings":{k: torch.as_tensor(v) for k, v in embeddings.items()},
+        "embeddings":{k: v for k, v in embeddings.items()},
         "rot_init":torch.as_tensor(initial_pose["R"], dtype=torch.float32),
         "trans_init":torch.as_tensor(initial_pose["T"], dtype=torch.float32),
         "pixel_size":pixel_size,
@@ -647,6 +659,52 @@ class BufferDict(nn.Module):
     def __len__(self):
         return len(dict(self.named_buffers()))
 
+
+def dgrambins_from_dgram_squared(
+    dgram: torch.Tensor, 
+    min_bin: float = 3.25, 
+    max_bin: float = 50.75, 
+    no_bins: float = 39, 
+    inf: float = 1e8,
+):
+    lower = torch.linspace(min_bin**2, max_bin**2, no_bins, device=dgram.device)
+    upper = torch.cat([lower[1:], lower.new_tensor([inf])], dim=-1)
+    dgram = ((dgram > lower) * (dgram < upper)).type(dgram.dtype)
+
+    return dgram, lower
+
+def dgram_squared_from_pos(
+    pos: torch.Tensor, 
+):
+    return torch.sum(
+        (pos[..., None, :] - pos[..., None, :, :]) ** 2, dim=-1, keepdim=True
+    )
+
+class TargetEmbedder(torch.nn.Module):
+    def __init__(self, 
+                 zdim,
+                 min_bin,
+                 max_bin,
+                 no_bins,
+                 ):
+        super(TargetEmbedder, self).__init__()
+        self.linear_t =  Linear(no_bins, zdim)
+        self.linear_out =  Linear(zdim, zdim)
+
+        self.min_bin = min_bin
+        self.max_bin = max_bin
+        self.no_bins = no_bins
+
+
+    def forward(self, z, target_pos):
+        dgram = dgram_squared_from_pos(target_pos)
+        dgram_bins, _= dgrambins_from_dgram_squared(dgram, min_bin=self.min_bin,
+                                            max_bin=self.max_bin,
+                                            no_bins=self.no_bins,)
+        z = z + self.linear_t(dgram_bins)
+        z = z + self.linear_out(z)
+        return z
+
 class AFDecoder(torch.nn.Module):
     def __init__(self, 
                  config, 
@@ -684,11 +742,18 @@ class AFDecoder(torch.nn.Module):
         self.hidden_dim=hidden_dim
 
         # filter embeddings to the keys needed
-        embeddings = {k: v for k, v in embeddings.items() if k in embeddings_keys.keys()}
+        embeddings = {k: torch.tensor(v) for k, v in embeddings.items() if k in embeddings_keys.keys()}
 
         # Read target file if needed
         if target_file is not None:
-            target_feats = get_target_feats(target_file, self.is_multimer)
+            target_feats = get_target_feats(target_file, embeddings)
+
+            self.target_embedder = TargetEmbedder(
+                zdim = embeddings["pair"].shape[-1],
+                min_bin = 2.0,
+                max_bin = 70.0,
+                no_bins = 64,
+            )
 
 
         # Convert embedding to features
@@ -741,12 +806,19 @@ class AFDecoder(torch.nn.Module):
 
         self.n_pix_cutoff=int(np.ceil(quality_ratio * self.sigma / self.pixel_size) * 2 + 1)    
     
-        # Structure module decoder
-        self.structure_module = StructureModule(
-            is_multimer=is_multimer,
-            **self.config["structure_module"],
-        )
 
+        checkpoint_structure_module = False
+        if checkpoint_structure_module:
+            self.structure_module = StructureModuleCheckpoint(
+                is_multimer=is_multimer,
+                **self.config["structure_module"],
+            )
+        else:
+            self.structure_module = StructureModule(
+                is_multimer=is_multimer,
+                **self.config["structure_module"],
+                
+            )
         self.refine_coefs = False
         if self.refine_coefs:
             self.coef_scale = nn.Parameter(torch.zeros(self.res_size))
@@ -788,6 +860,11 @@ class AFDecoder(torch.nn.Module):
             k: v.unsqueeze(0).expand(batch_dim+ tuple(-1 for _ in v.shape)) for k, v in self.embeddings.items()
         }
 
+        pair = embedding_expand["pair"]
+
+        if self.target_file is not None:
+            pair = self.target_embedder(pair,  embedding_expand["all_atom_positions"][..., 1, :])
+
         if self.pair_stack : 
             pos_mask = embedding_expand["seq_mask"]
             pair_mask = pos_mask[..., None] * pos_mask[..., None, :]
@@ -796,7 +873,7 @@ class AFDecoder(torch.nn.Module):
 
             # [*, N, N, Pdim]
             pair_update = self.decoder_(
-                    z=embedding_expand["pair"],
+                    z=pair,
                     latent=latent[..., None, :, :],
                     mask=pair_mask,
                     inplace_safe=inplace_safe
@@ -811,7 +888,7 @@ class AFDecoder(torch.nn.Module):
             pair_update = pair_update.reshape(batch_dim + (self.res_size, self.res_size, self.outdim))
             
             # [*, N, N, Pdim]
-            pair_update = add(embedding_expand["pair"], pair_update, inplace_safe)
+            pair_update = add(pair, pair_update, inplace_safe)
 
         structure_input = {
             "pair": pair_update,
@@ -1228,10 +1305,10 @@ def parse_pdb(file_id, pdb_string):
     return ParsingResult(mmcif_object=mmcif_object, errors=None)
 
 
-def get_target_feats(mmcif_file, embeddings, is_multimer=False):
+def get_target_feats(mmcif_file, embeddings, transpose=True):
 
     # Dummy dataprocessor
-    data_processor = DataPipelineMultimer(DataPipeline(None)) if is_multimer else DataPipeline(None)
+    data_processor = DataPipelineMultimer(DataPipeline(None)) 
 
     # Read PDB/MMCIF string
     with open(mmcif_file, 'r') as f:
@@ -1283,7 +1360,7 @@ def get_target_feats(mmcif_file, embeddings, is_multimer=False):
     all_chain_features = add_assembly_features(all_chain_features)
 
     # Keep only the target features 
-    target_keys = ["asym_id","final_atom_positions","all_atom_mask","residue_index","aatype"]
+    target_keys = ["asym_id","all_atom_positions","all_atom_mask","residue_index","aatype"]
     target_feats = {}
     for f in target_keys:
         target_feats[f] = np.concatenate([v[f] for k,v in all_chain_features.items()], axis=0)
@@ -1291,6 +1368,8 @@ def get_target_feats(mmcif_file, embeddings, is_multimer=False):
     # Convert to tensor
     target_feats = {k:torch.tensor(v, dtype=torch.long) if np.issubdtype(v.dtype, np.integer) else torch.tensor(v, dtype=torch.float) for k,v in target_feats.items()}
 
+    print(target_feats["aatype"].shape[0])
+    print(embeddings["aatype"])
     # Align target to embedding if needed
     if target_feats["aatype"].shape[0] != embeddings["aatype"].shape[0]:
         seq1 = "".join([rc.restypes_with_x[i] for i in target_feats["aatype"]])
@@ -1305,6 +1384,26 @@ def get_target_feats(mmcif_file, embeddings, is_multimer=False):
         for k,v in target_feats_mapped.items():
             v[mapping] = target_feats[k] 
         target_feats = target_feats_mapped
+
+    if transpose:
+        len_chain = len(torch.unique(embeddings["asym_id"]).cpu().numpy().tolist())
+        perms = list(itertools.permutations(np.arange(len_chain)))
+
+        for p in perms:
+            tmp = transpose_chains(target_feats, p)
+            print((tmp["aatype"] == embeddings["aatype"]))
+            if all(tmp["aatype"] == embeddings["aatype"]):
+                target_feats = tmp
+                break
+
+
+    print("embeddings")
+    for i in range(5):
+        print("Chain %i : %s "%(i,str((embeddings["asym_id"]==(i+1)).sum())))
+    print("target")
+    # target_feats = transpose_chains(target_feats, (0,2,3,4,1))
+    for i in range(5):
+        print("Chain %i : %s "%(i,str((target_feats["asym_id"]==(i+1)).sum())))
 
     # Final assertions
     assert all(target_feats["aatype"] == embeddings["aatype"])
@@ -1340,10 +1439,12 @@ def transpose_chains(t, transpose):
     order = np.unique(t["asym_id"])[[i for i in transpose]]
     order_ind = np.concatenate([np.where(asym_id==i)[0] for i in order])
     new_asym_id = np.concatenate([(i+1)*np.ones((asym_id==o).sum()) for i,o in enumerate(order)])
-    t["all_atom_positions"] = t["all_atom_positions"][order_ind]
-    t["aatype"] = t["aatype"][order_ind]
-    t["asym_id"] = new_asym_id
-    return t
+
+    out = {k:v for k,v in t.items()}
+    out["all_atom_positions"] = t["all_atom_positions"][order_ind]
+    out["aatype"] = t["aatype"][order_ind]
+    out["asym_id"] = new_asym_id
+    return out
 
 
 
@@ -1457,14 +1558,14 @@ class CryoFormerBlock(nn.Module):
     ):
         super(CryoFormerBlock, self).__init__()
 
-        self.tri_mul_out = TriangleMultiplicationOutgoing(
-            c_z,
-            c_hidden_mul,
-        )
-        self.tri_mul_in = TriangleMultiplicationIncoming(
-            c_z,
-            c_hidden_mul,
-        )
+        # self.tri_mul_out = TriangleMultiplicationOutgoing(
+        #     c_z,
+        #     c_hidden_mul,
+        # )
+        # self.tri_mul_in = TriangleMultiplicationIncoming(
+        #     c_z,
+        #     c_hidden_mul,
+        # )
 
         self.tri_att_start = TriangleCrossAttention(
             c_z,
@@ -1500,31 +1601,31 @@ class CryoFormerBlock(nn.Module):
         _attn_chunk_size: Optional[int] = None
     ) -> torch.Tensor:
 
-        tmu_update = self.tri_mul_out(
-            z,
-            mask=pair_mask,
-            inplace_safe=inplace_safe,
-            _add_with_inplace=True,
-        )
-        if (not inplace_safe):
-            z = z + self.ps_dropout_row_layer(tmu_update)
-        else:
-            z = tmu_update
+        # tmu_update = self.tri_mul_out(
+        #     z,
+        #     mask=pair_mask,
+        #     inplace_safe=inplace_safe,
+        #     _add_with_inplace=True,
+        # )
+        # if (not inplace_safe):
+        #     z = z + self.ps_dropout_row_layer(tmu_update)
+        # else:
+        #     z = tmu_update
 
-        del tmu_update
+        # del tmu_update
 
-        tmu_update = self.tri_mul_in(
-            z,
-            mask=pair_mask,
-            inplace_safe=inplace_safe,
-            _add_with_inplace=True,
-        )
-        if (not inplace_safe):
-            z = z + self.ps_dropout_row_layer(tmu_update)
-        else:
-            z = tmu_update
+        # tmu_update = self.tri_mul_in(
+        #     z,
+        #     mask=pair_mask,
+        #     inplace_safe=inplace_safe,
+        #     _add_with_inplace=True,
+        # )
+        # if (not inplace_safe):
+        #     z = z + self.ps_dropout_row_layer(tmu_update)
+        # else:
+        #     z = tmu_update
 
-        del tmu_update
+        # del tmu_update
 
         z = add(z,
                 self.ps_dropout_row_layer(
@@ -1650,51 +1751,18 @@ class CryoFormerStack(nn.Module):
 
 
 
+class EncodeTable(nn.Module):
+    def __init__(self, n_imgs, zdim):
+        super(EncodeTable, self).__init__()
+
+        self.table = nn.Parameter(
+            torch.cat(
+                (torch.zeros(n_imgs, zdim, 1), # z_mu
+                torch.ones(n_imgs, zdim, 1)), # z_logvar
+            dim=-1), requires_grad=True)
+
+    def forward(self, indices):
+        t = self.table[indices]
+        return t[...,0], t[...,1]
 
 
-BLOCK_ARG = Any
-BLOCK_ARGS = List[BLOCK_ARG]
-
-
-def get_checkpoint_fn():
-    checkpoint = partial(torch.utils.checkpoint.checkpoint, use_reentrant=False)
-    return checkpoint
-
-
-@torch.jit.ignore
-def checkpoint_blocks(
-    blocks: List[Callable],
-    args: BLOCK_ARGS,
-    blocks_per_ckpt: Optional[int],
-) -> BLOCK_ARGS:
-
-    def wrap(a):
-        return (a,) if type(a) is not tuple else a
-
-    def exec(b, a):
-        for block in b:
-            a = wrap(block(*a))
-        return a
-
-    def chunker(s, e):
-        def exec_sliced(*a):
-            return exec(blocks[s:e], a)
-
-        return exec_sliced
-
-    # Avoids mishaps when the blocks take just one argument
-    args = wrap(args)
-
-    if blocks_per_ckpt is None or not torch.is_grad_enabled():
-        return exec(blocks, args)
-    elif blocks_per_ckpt < 1 or blocks_per_ckpt > len(blocks):
-        raise ValueError("blocks_per_ckpt must be between 1 and len(blocks)")
-
-    checkpoint = get_checkpoint_fn() 
-
-    for s in range(0, len(blocks), blocks_per_ckpt):
-        e = s + blocks_per_ckpt
-        args = checkpoint(chunker(s, e), *args)
-        args = wrap(args)
-
-    return args
