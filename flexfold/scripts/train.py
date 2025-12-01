@@ -59,9 +59,7 @@ from flexfold import dataset
 from flexfold.models import HetOnlyVAE, AFDecoderReal, AFDecoder, struct_to_crd, EncodeTable
 from flexfold.pose import PoseTracker
 from flexfold.core import vol_real, get_cc, fourier_corr, output_single_pdb, struct_to_pdb,weighted_normalized_l2, gaussian_weight, frequency_weights
-from pytorch_lightning.strategies import DDPStrategy, FSDPStrategy
-from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
-from torch.distributed.fsdp import ShardingStrategy, FullyShardedDataParallel as FSDP
+from pytorch_lightning.strategies import DDPStrategy
 from scipy.ndimage import gaussian_filter
 from flexfold.core import ifft2_center, unsymmetrize_ht, rotmat_angle_deg
 from torch.optim.lr_scheduler import LambdaLR
@@ -69,13 +67,36 @@ from flexfold.lora import apply_lora_config_to_model, lora_light, full_no_angle
 from flexfold.core import plot_loss
 from cryodrgn import lie_tools
 
+def is_global_rank0() -> bool:
+    for key in ["RANK", "OMPI_COMM_WORLD_RANK", "PMI_RANK"]:
+        if key in os.environ:
+            return int(os.environ[key]) == 0
+    return True  
+
+def quat_angle_deg(q1, q2):
+    dot = torch.sum(q1 * q2, dim=-1).abs().clamp(-1.0, 1.0)
+    return torch.rad2deg(2.0 * torch.acos(dot))
+def quat_angle_l2_approx(q1, q2):
+    # ensure aligned quaternion signs (avoid the double-cover discontinuity)
+    sign = torch.sign(torch.sum(q1 * q2, dim=-1, keepdim=True))
+    q2a = q2 * sign
+    return 2.0 * (q1 - q2a).norm(dim=-1)
+
+def quat_angle_cos_approx(q1, q2):
+    return 1 - (q1* q2).sum(dim=-1)**2
+
 def pose_loss_func(rot, rot0, trans, trans0, rot_weight=1.0, trans_weight=1.0):
-    angle_dist_squared = torch.rad2deg(torch.mean(4 * (1 - torch.matmul(rot[..., None, :], rot0[..., :, None])**2 ) ))
-    spatial_dist_squared =  torch.mean(torch.sum((trans-trans0)**2, dim=-1))
+    true_angle_dist = torch.mean(quat_angle_deg(rot, rot0))
+    angle_dist1 = torch.mean(quat_angle_l2_approx(rot, rot0))
+    angle_dist2 = torch.mean(quat_angle_cos_approx(rot, rot0))
+    
+    spatial_dist =  torch.mean(torch.sum((trans-trans0)**2, dim=-1))
 
-    print("Angle = %.2f deg ; Shift = %.2f ang"%(angle_dist_squared.item(), spatial_dist_squared.item()))
+    print("True = ", true_angle_dist)
+    print("Approx1 = ", angle_dist1)
+    print("Approx2 = ", angle_dist2)
 
-    L = rot_weight * angle_dist_squared +  trans_weight *spatial_dist_squared
+    L = rot_weight * angle_dist1 +  trans_weight *spatial_dist
     return L
 
 def pad_to_max(tensor, max_size):
@@ -209,9 +230,6 @@ def add_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--devices", type=str, default="auto", help="TODO"
-    )
-    parser.add_argument(
-        "--fsdp",  action="store_true", help="TODO"
     )
     parser.add_argument(
         "--num_nodes", type=int, default=1, help="TODO"
@@ -927,7 +945,10 @@ class LitHetOnlyVAE(pl.LightningModule):
         z_mu, z_logvar = self.run_encoder(y,y_real, batch[-1], c)
         
         # Reparametrize latent space
-        z = self.model.reparameterize(z_mu, z_logvar)
+        if z_logvar is not None:
+            z = self.model.reparameterize(z_mu, z_logvar)
+        else:
+            z=z_mu
 
         # Decoder
         y_recon, mask, struct = self.run_decoder(z,rot, c)
@@ -996,6 +1017,8 @@ class LitHetOnlyVAE(pl.LightningModule):
         idx = batch[-1]
         y, y_real, rot, _, c = self.prepare_batch(batch)
         z_mu, z_logvar = self.run_encoder(y,y_real, batch[-1], c)
+        if z_logvar is None:
+            z_logvar = torch.zeros_like(z_mu)
 
         self.val_z_mu.append(z_mu)
         self.val_z_logvar.append(z_logvar)
@@ -1155,19 +1178,23 @@ class LitHetOnlyVAE(pl.LightningModule):
         gen_loss, total_gen_loss = self.gen_loss(y, y_real, y_recon, mask, struct, ind)
 
         # latent loss
-        kld = torch.mean(
-            -0.5 * torch.sum(1 + z_logvar - z_mu.pow(2) - z_logvar.exp(), dim=1), dim=0
-        )
-        if torch.isnan(kld):
-            logger.info(z_mu[0])
-            logger.info(z_logvar[0])
-            raise RuntimeError("KLD is nan")
+        if z_logvar is not None:
+            kld = torch.mean(
+                -0.5 * torch.sum(1 + z_logvar - z_mu.pow(2) - z_logvar.exp(), dim=1), dim=0
+            )
+            if torch.isnan(kld):
+                logger.info(z_mu[0])
+                logger.info(z_logvar[0])
+                raise RuntimeError("KLD is nan")
 
-        # total loss
-        if self.args.beta_control is None:
-            loss = total_gen_loss + beta * kld / mask.sum().float()
+            # total loss
+            if self.args.beta_control is None:
+                loss = total_gen_loss + beta * kld / mask.sum().float()
+            else:
+                loss =  total_gen_loss+ self.args.beta_control * (beta - kld) ** 2 / mask.sum().float()
         else:
-            loss =  total_gen_loss+ self.args.beta_control * (beta - kld) ** 2 / mask.sum().float()
+            loss = total_gen_loss
+            kld =torch.zeros_like(loss)
 
         return loss, gen_loss, kld
 
@@ -1273,11 +1300,11 @@ def main(args: argparse.Namespace) -> None:
     if args.verbose:
         logger.setLevel(logging.DEBUG)
 
-    if args.outdir is not None and not os.path.exists(args.outdir):
+    if not os.path.exists(args.outdir) and is_global_rank0():
         os.makedirs(args.outdir)
 
     ################################################################################""
-    if args.overwrite:
+    if args.overwrite and is_global_rank0():
         os.system("rm -rvf %s/*"%args.outdir )
     ################################################################################""
 
@@ -1347,26 +1374,13 @@ def main(args: argparse.Namespace) -> None:
     n_devices = torch.cuda.device_count() if args.devices == "auto" else int(args.devices)
 
 
-    if args.fsdp:
-        def name_based_auto_wrap_policy(module, recurse, nonwrapped_numel, **kwargs):
-            return isinstance(module, StructureModule)
-
-        strategy = FSDPStrategy(
-            auto_wrap_policy=name_based_auto_wrap_policy,
-            cpu_offload=False,   # can be True if GPU memory still insufficient
-            sharding_strategy="FULL_SHARD",  # most memory efficient
-            limit_all_gathers=True,
-            use_orig_params=True,
-            cluster_environment=cluster_environment,
-        )
-    else:
-        if n_devices >1:
+    if n_devices >1:
             strategy = DDPStrategy(find_unused_parameters=False,
                                     cluster_environment=cluster_environment,
                                     process_group_backend="nccl")
                                     # process_group_backend="gloo")
-        else:
-            strategy="auto"
+    else:
+        strategy="auto"
 
 
     trainer = pl.Trainer(
@@ -1382,13 +1396,6 @@ def main(args: argparse.Namespace) -> None:
         enable_model_summary=True,
         val_check_interval =args.val_check_interval
     )
-
-    for name, module in model.named_modules():
-        if getattr(module, "_is_fsdp", False):
-            print("✅ FSDP wrapped:", name)
-        else:
-            print("✅ FSDP not wrapped:", name)
-
 
     trainer.fit(model, datamodule=datamodule)
     

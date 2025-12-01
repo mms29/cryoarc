@@ -112,6 +112,8 @@ class HetOnlyVAE(nn.Module):
             )
         elif encode_mode == "table":
             self.encoder  = EncodeTable(qdim, zdim)
+        elif encode_mode == "tableVAE":
+            self.encoder  = EncodeTableVAE(qdim, zdim)
         else:
             raise RuntimeError("Encoder mode {} not recognized".format(encode_mode))
         self.encode_mode = encode_mode
@@ -205,7 +207,9 @@ class HetOnlyVAE(nn.Module):
 
     def encode(self, *img) -> Tuple[Tensor, Tensor]:
         if isinstance(self.encoder, EncodeTable):
-            return  self.encoder(*img)
+            return  self.encoder(*img), None
+        elif isinstance(self.encoder, EncodeTableVAE):
+            return  self.encoder(*img), None
         else:
             img = (x.view(x.shape[0], -1) for x in img)
             if self.enc_mask is not None:
@@ -680,31 +684,6 @@ def dgram_squared_from_pos(
         (pos[..., None, :] - pos[..., None, :, :]) ** 2, dim=-1, keepdim=True
     )
 
-class TargetEmbedder(torch.nn.Module):
-    def __init__(self, 
-                 zdim,
-                 min_bin,
-                 max_bin,
-                 no_bins,
-                 ):
-        super(TargetEmbedder, self).__init__()
-        self.linear_t =  Linear(no_bins, zdim)
-        self.linear_out =  Linear(zdim, zdim)
-
-        self.min_bin = min_bin
-        self.max_bin = max_bin
-        self.no_bins = no_bins
-
-
-    def forward(self, z, target_pos):
-        dgram = dgram_squared_from_pos(target_pos)
-        dgram_bins, _= dgrambins_from_dgram_squared(dgram, min_bin=self.min_bin,
-                                            max_bin=self.max_bin,
-                                            no_bins=self.no_bins,)
-        z = z + self.linear_t(dgram_bins)
-        z = z + self.linear_out(z)
-        return z
-
 class AFDecoder(torch.nn.Module):
     def __init__(self, 
                  config, 
@@ -743,27 +722,19 @@ class AFDecoder(torch.nn.Module):
 
         # filter embeddings to the keys needed
         embeddings = {k: torch.tensor(v) for k, v in embeddings.items() if k in embeddings_keys.keys()}
+        embeddings["all_atom_positions"] = embeddings["final_atom_positions"]
+        embeddings["all_atom_mask"] = embeddings["final_atom_mask"] 
 
         # Read target file if needed
         if target_file is not None:
             target_feats = get_target_feats(target_file, embeddings)
 
-            self.target_embedder = TargetEmbedder(
-                zdim = embeddings["pair"].shape[-1],
-                min_bin = 2.0,
-                max_bin = 70.0,
-                no_bins = 64,
-            )
-
+            mask = target_feats["all_atom_mask"][..., 1]==1
+            embeddings["all_atom_positions"][mask]= target_feats["all_atom_positions"][mask]
+            # embeddings["all_atom_mask"] = target_feats["all_atom_mask"]
 
         # Convert embedding to features
-        def make_gt(feats):
-            feats["all_atom_positions"] = target_feats ["all_atom_positions"] if target_file is not None else feats["final_atom_positions"] 
-            feats["all_atom_mask"] = feats["final_atom_mask"] 
-            return feats
         fc = [
-            # data_transforms.make_fixed_size(embeddings_keys,0,0,500,0),
-            make_gt,
             data_transforms.make_atom14_positions,
             data_transforms.atom37_to_frames,
             data_transforms.atom37_to_torsion_angles(""),
@@ -798,7 +769,7 @@ class AFDecoder(torch.nn.Module):
                 no_heads=4,
                 no_blocks=layers,
                 transition_n=2,
-                dropout_rate=0.15,
+                dropout_rate=0.0,
                 blocks_per_ckpt=1
             )
         else:
@@ -806,6 +777,8 @@ class AFDecoder(torch.nn.Module):
 
         self.n_pix_cutoff=int(np.ceil(quality_ratio * self.sigma / self.pixel_size) * 2 + 1)    
     
+
+        self.config.structure_module.dropout_rate = 0.0
 
         checkpoint_structure_module = False
         if checkpoint_structure_module:
@@ -861,9 +834,6 @@ class AFDecoder(torch.nn.Module):
         }
 
         pair = embedding_expand["pair"]
-
-        if self.target_file is not None:
-            pair = self.target_embedder(pair,  embedding_expand["all_atom_positions"][..., 1, :])
 
         if self.pair_stack : 
             pos_mask = embedding_expand["seq_mask"]
@@ -1055,10 +1025,29 @@ def import_weights(model, ckpt_path):
 
 def import_openfold_weights_sm(model, state_dict):
     try:
-        model.load_state_dict(state_dict, strict=False)
+        missing_keys,unexpected_keys  = model.load_state_dict(state_dict, strict=False)
+
+        missing_keys = [k for k in missing_keys if k.startswith("structure_module")]
+        unexpected_keys = [k for k in unexpected_keys if k.startswith("structure_module")]
+
+        if len(missing_keys)>0:
+            raise
+        if len(unexpected_keys)>0:
+            raise
+
     except RuntimeError:
         converted_state_dict = convert_deprecated_v1_keys(state_dict)
-        model.load_state_dict(converted_state_dict, strict=False)
+        missing_keys,unexpected_keys = model.load_state_dict(converted_state_dict, strict=False)
+
+    missing_keys = [k for k in missing_keys if k.startswith("structure_module")]
+    unexpected_keys = [k for k in unexpected_keys if k.startswith("structure_module")]
+
+    print("Missing keys:", missing_keys)
+    print("Unexpected keys:", unexpected_keys)
+    if len(missing_keys)>0:
+        raise
+    if len(unexpected_keys)>0:
+        raise
 
 
 def import_jax_weights_sm(model, npz_path, version="model_1"):
@@ -1304,8 +1293,7 @@ def parse_pdb(file_id, pdb_string):
     )
     return ParsingResult(mmcif_object=mmcif_object, errors=None)
 
-
-def get_target_feats(mmcif_file, embeddings, transpose=True):
+def mmcif_feats_from_file(mmcif_file):
 
     # Dummy dataprocessor
     data_processor = DataPipelineMultimer(DataPipeline(None)) 
@@ -1318,11 +1306,11 @@ def get_target_feats(mmcif_file, embeddings, transpose=True):
     ext = os.path.splitext(mmcif_file)[1].lower()
     if ext in [".pdb"]: 
         mmcif_object = parse_pdb(
-            file_id="1HZH", pdb_string=mmcif_string
+            file_id="", pdb_string=mmcif_string
         )
     else:
         mmcif_object = mmcif_parsing.parse(
-            file_id="1HZH", mmcif_string=mmcif_string
+            file_id="", mmcif_string=mmcif_string
         )
 
     # Crash if an error is encountered. Any parsing errors should have
@@ -1361,29 +1349,38 @@ def get_target_feats(mmcif_file, embeddings, transpose=True):
 
     # Keep only the target features 
     target_keys = ["asym_id","all_atom_positions","all_atom_mask","residue_index","aatype"]
-    target_feats = {}
+    feats = {}
     for f in target_keys:
-        target_feats[f] = np.concatenate([v[f] for k,v in all_chain_features.items()], axis=0)
+        feats[f] = np.concatenate([v[f] for k,v in all_chain_features.items()], axis=0)
 
     # Convert to tensor
-    target_feats = {k:torch.tensor(v, dtype=torch.long) if np.issubdtype(v.dtype, np.integer) else torch.tensor(v, dtype=torch.float) for k,v in target_feats.items()}
+    feats = {k:torch.tensor(v, dtype=torch.long) if np.issubdtype(v.dtype, np.integer) else torch.tensor(v, dtype=torch.float) for k,v in feats.items()}
 
-    print(target_feats["aatype"].shape[0])
-    print(embeddings["aatype"])
-    # Align target to embedding if needed
-    if target_feats["aatype"].shape[0] != embeddings["aatype"].shape[0]:
-        seq1 = "".join([rc.restypes_with_x[i] for i in target_feats["aatype"]])
-        seq2 = "".join([rc.restypes_with_x[i] for i in embeddings["aatype"]])
+    return feats
 
-        mapping = map_sequences(seq1, seq2)
-        if -1 in mapping:
-            raise NotImplementedError() #FIXME
-        target_feats_mapped = {k:v.clone() for k,v in {k2:v2 for k2,v2 in embeddings.items() if k2 in target_keys}.items()}
-        target_feats_mapped["all_atom_positions"] = target_feats_mapped["final_atom_positions"]
-        del target_feats_mapped["final_atom_positions"]
-        for k,v in target_feats_mapped.items():
-            v[mapping] = target_feats[k] 
-        target_feats = target_feats_mapped
+def get_target_feats(mmcif_file, embeddings, transpose=True):
+
+    target_feats =  mmcif_feats_from_file(mmcif_file)
+
+    # # Align target to embedding if needed FIXME
+    # if target_feats["aatype"].shape[0] != embeddings["aatype"].shape[0]:
+
+    #     print("Target residues differs from embeddings, trying to align ...")
+    #     print()
+    #     seq1 = "".join([rc.restypes_with_x[i] for i in target_feats["aatype"]])
+    #     seq2 = "".join([rc.restypes_with_x[i] for i in embeddings["aatype"]])
+
+
+
+    #     mapping = map_sequences(seq1, seq2)
+    #     if -1 in mapping:
+    #         raise NotImplementedError() #FIXME
+    #     target_feats_mapped = {k:v.clone() for k,v in {k2:v2 for k2,v2 in embeddings.items() if k2 in target_keys}.items()}
+    #     target_feats_mapped["all_atom_positions"] = target_feats_mapped["final_atom_positions"]
+    #     del target_feats_mapped["final_atom_positions"]
+    #     for k,v in target_feats_mapped.items():
+    #         v[mapping] = target_feats[k] 
+    #     target_feats = target_feats_mapped
 
     if transpose:
         len_chain = len(torch.unique(embeddings["asym_id"]).cpu().numpy().tolist())
@@ -1396,14 +1393,6 @@ def get_target_feats(mmcif_file, embeddings, transpose=True):
                 target_feats = tmp
                 break
 
-
-    print("embeddings")
-    for i in range(5):
-        print("Chain %i : %s "%(i,str((embeddings["asym_id"]==(i+1)).sum())))
-    print("target")
-    # target_feats = transpose_chains(target_feats, (0,2,3,4,1))
-    for i in range(5):
-        print("Chain %i : %s "%(i,str((target_feats["asym_id"]==(i+1)).sum())))
 
     # Final assertions
     assert all(target_feats["aatype"] == embeddings["aatype"])
@@ -1751,9 +1740,9 @@ class CryoFormerStack(nn.Module):
 
 
 
-class EncodeTable(nn.Module):
+class EncodeTableVAE(nn.Module):
     def __init__(self, n_imgs, zdim):
-        super(EncodeTable, self).__init__()
+        super(EncodeTableVAE, self).__init__()
 
         self.table = nn.Parameter(
             torch.cat(
@@ -1764,5 +1753,14 @@ class EncodeTable(nn.Module):
     def forward(self, indices):
         t = self.table[indices]
         return t[...,0], t[...,1]
+
+class EncodeTable(nn.Module):
+    def __init__(self, n_imgs, zdim):
+        super(EncodeTable, self).__init__()
+
+        self.table = nn.Parameter(torch.zeros(n_imgs, zdim), requires_grad=True)
+
+    def forward(self, indices):
+        return  self.table[indices]
 
 

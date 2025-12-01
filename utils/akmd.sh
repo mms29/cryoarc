@@ -137,7 +137,7 @@ python ./scripts/train.py $BASE_DIR/Particles/particles.mrcs  \
 
 
 
-RUN_DIR=$BASE_DIR/run_conv_fourier_sgd
+RUN_DIR=$BASE_DIR/run_test
 
 python ./scripts/train.py $BASE_DIR/Particles/particles.mrcs \
  --poses $BASE_DIR/particles.pkl  \
@@ -191,3 +191,33 @@ drgnai train $RUN_DIR
 
 conda activate flexfold
 python ./flexfold/scripts/drgnai_assert.py -i $RUN_DIR/out -o $RUN_DIR --gt_pdbs "$BASE_DIR/../pdbs/*pdb" --gt_vols "$BASE_DIR/../vols128/*mrc" --epoch 99
+
+
+
+##############
+
+python ./flexfold/scripts/wrapped_backprojection.py \
+ -i /home/vuillemr/flexfold/data/cryofold/AKMD/snr1/run/ -o /home/vuillemr/flexfold/data/cryofold/AKMD/snr1/backproject_test\
+ --batch_size 16 --particles /home/vuillemr/flexfold/data/cryofold/AKMD/snr0.005/Particles/particles.mrcs \
+  --poses  /home/vuillemr/flexfold/data/cryofold/AKMD/snr1/particles.pkl --ctf /home/vuillemr/flexfold/data/cryofold/AKMD/snr1/ctf.pkl \
+  --wiener_constant 1.0 --use_warp 
+  
+python ./flexfold/scripts/flexible_backprojection.py \
+ -i /home/vuillemr/flexfold/data/cryofold/AKMD/snr1/run/ -o /home/vuillemr/flexfold/data/cryofold/AKMD/snr1/backproject_test\
+ --batch_size 16 --particles /home/vuillemr/flexfold/data/cryofold/AKMD/snr0.005/Particles/particles.mrcs \
+  --poses  /home/vuillemr/flexfold/data/cryofold/AKMD/snr1/particles.pkl --ctf /home/vuillemr/flexfold/data/cryofold/AKMD/snr1/ctf.pkl \
+  --wiener_constant 1.0  --sigma 4.0 --gaussian_threshold 0.80
+
+
+
+
+
+
+BASE_DIR="/home/vuillemr/flexfold/data/cryofold/AKMD/snr1"
+RUN_DIR=$BASE_DIR/run_dynamight
+
+dynamight optimize-deformations  --refinement-star-file $BASE_DIR/particles_006740.star  --output-directory $RUN_DIR --initial-model $BASE_DIR/backproject/backproject.mrc
+
+dynamight optimize-inverse-deformations $RUN_DIR --checkpoint-file $RUN_DIR/forward_deformations/checkpoints/150.pth
+
+dynamight deformable-backprojection $RUN_DIR  --vae-directory  $RUN_DIR/forward_deformations/checkpoints/150.pth

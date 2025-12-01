@@ -513,7 +513,7 @@ class StructureModule(nn.Module):
             c_z=self.c_z,
             c_hidden=self.c_ipa,
             no_heads=self.no_heads_ipa,
-            z_factor_rank=1,  # Rank of the factorization of the edge embedding
+            z_factor_rank=4,  # Rank of the factorization of the edge embedding
             no_qk_points=self.no_qk_points,
             no_v_points=self.no_v_points,
         )
@@ -598,13 +598,19 @@ class StructureModule(nn.Module):
             fmt="quat",
         )
         outputs = []
+
+        print(z.shape)
+        z_factor_1, z_factor_2 = factorize(z, R = self.ipa_conf.z_factor_rank)
+        z_factor_1 = z_factor_1.contiguous()
+        z_factor_2 = z_factor_2.contiguous()
+
         for i in range(self.no_blocks):
             # [*, N, C_s]
             s = s + self.ipa(
                 s=s, 
                 z=z, 
-                z_factor_1=None,
-                z_factor_2=None,
+                z_factor_1=z_factor_1,
+                z_factor_2=z_factor_2,
                 r=rigids, 
                 mask=mask, 
                 _offload_inference=_offload_inference, 
@@ -2308,15 +2314,16 @@ class InvariantPointAttention(nn.Module):
 
         self.headdim_eff = max(
             self._ipa_conf.c_hidden + 5 * self.no_qk_points + (self._ipa_conf.z_factor_rank * self.no_heads),
-            self._ipa_conf.c_hidden + 3 * self.no_v_points + (self._ipa_conf.z_factor_rank * self.c_z // 4),
+            self._ipa_conf.c_hidden + 3 * self.no_v_points + (self._ipa_conf.z_factor_rank * self.c_z ),
         )
 
         if self.headdim_eff > 256:
+            print(self.headdim_eff)
             assert (
                 self.use_flash_attn is False or self.attn_dtype == torch.float16
             ), "For headdim_eff > 256, you must use either naive attention or FFPA, which requires fp16 dtype."
 
-    def flash_ipa_fwd(self, q, k, v, q_pts, k_pts, v_pts, z_factor_1, z_factor_2, r, mask):
+    def flash_ipa_fwd(self, q, k, v, q_pts, k_pts, v_pts, z_factor_1, z_factor_2, r, mask, z_full=None):
         """
         Compute squared norm components (used for SE(3) invariance part)
         """
@@ -2334,7 +2341,21 @@ class InvariantPointAttention(nn.Module):
         """
         Compute pair bias factors
         """
-        if z_factor_1 is not None and z_factor_2 is not None:
+        if z_full is not None:
+            print(z_full[0].shape)
+
+            b = self.linear_b(z_full[0])
+            print(b.shape)
+            b1, b2 = factorize(b)
+            b1 = permute_final_dims(b1 , (0,2,1))
+            b2 = permute_final_dims(b2 , (0,2,1))
+
+            print(b1.shape)
+            print(b2.shape)
+
+            print(z_factor_1.shape)
+            print(z_factor_2.shape)
+        elif z_factor_1 is not None and z_factor_2 is not None:
             # z_factor_1 has shape [B, N_res, rank, C_z]
             z_comb = torch.cat([z_factor_1.unsqueeze(1), z_factor_2.unsqueeze(1)], dim=1)
             b = self.linear_b(z_comb)
@@ -2344,6 +2365,7 @@ class InvariantPointAttention(nn.Module):
             z_comb_down = self.down_z(z_comb)
             z_factor_1 = z_comb_down[:, 0, :, :, :]  # B, N_res, rank, C_z//4
             z_factor_2 = z_comb_down[:, 1, :, :, :]  # B, N_res, rank, C_z//4
+
 
         """
         Compute q_aggregated
@@ -2481,7 +2503,10 @@ class InvariantPointAttention(nn.Module):
             o_feats = [o, *torch.unbind(o_pt, dim=-1), o_pt_norm_feats, o_pair]
         else:
             o_feats = [o, *torch.unbind(o_pt, dim=-1), o_pt_norm_feats]
-
+        print(o.shape)
+        print(torch.unbind(o_pt, dim=-1).shape)
+        print(o_pt_norm_feats.shape)
+        print(torch.cat(o_feats, dim=-1).shape)
         s = self.linear_out(torch.cat(o_feats, dim=-1))
 
         return s
@@ -2660,6 +2685,7 @@ class InvariantPointAttention(nn.Module):
                 z_factor_2,
                 r,
                 mask=mask,
+                z_full=z,
             )
 
         else:
@@ -2725,28 +2751,6 @@ def pad_input(hidden_states, indices, batch, seqlen):
     output = torch.zeros((batch * seqlen), *dim, device=hidden_states.device, dtype=hidden_states.dtype)
     output[indices] = hidden_states
     return rearrange(output, "(b s) ... -> b s ...", b=batch)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 from openfold.utils.import_weights import convert_deprecated_v1_keys
@@ -2841,18 +2845,41 @@ fc = [
 ]
 for f in fc:
     embeddings = f(embeddings)
-###############################################################
-#OPtimizer loop
-###############################################################
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-n_epochs=1000
-M = N -11
-M_limit = 50
-for i in range(n_epochs):
-    optimizer.zero_grad()         
 
-    outputs = {}
-    outputs["sm"]  = model(
+
+
+def factorize(x, R = 4):
+    # [..., L, L, D]
+
+    x = permute_final_dims(x, (2,0,1))
+
+    # batch SVD: returns U [D,L,L], S [D,L], Vh [D,L,L]
+    # If L is big and D large, consider torch.linalg.svd_lowrank or randomized route
+    U, S, Vh = torch.linalg.svd(x)  # uses batched SVD if X is batched
+
+    # take top-R components
+    U_r = U[...,  :, :R]              # [D, L, R]
+    V_r = permute_final_dims(Vh[..., :R, :],(0, 2, 1))  # V = Vh.T -> [D, L, R]
+
+    # scale by sqrt of singular values: shape [D, R]
+    S_r = S[..., :R]                 # [D, R]
+    sqrtS = torch.sqrt(S_r)       # [D, R]
+
+    # incorporate sqrtS into U_r and V_r (broadcast)
+    A = U_r * sqrtS.unsqueeze(-2)   # [D, L, R]
+    B = V_r * sqrtS.unsqueeze(-2)   # [D, L, R]
+
+    # return in requested shape (L, R, D)
+    x1 = permute_final_dims(A,(1, 2, 0))   # [L, R, D]
+    x2 = permute_final_dims(B,(1, 2, 0))   # [L, R, D]
+
+    return x1, x2
+
+z = embeddings["pair"]
+b = model.structure_module.ipa.linear_b(z)
+b1, b2 = factorize(b)
+
+model(
             {
                 "pair": embeddings["pair"][None],
                 "single":embeddings["single"][None]
@@ -2863,38 +2890,61 @@ for i in range(n_epochs):
             _offload_inference=False,
 
         )
-    outputs["final_atom_positions"] = atom14_to_atom37(
-        outputs["sm"]["positions"][-1], embeddings
-    )
-    outputs["final_atom_mask"] = embeddings["atom37_atom_exists"]
-    outputs["final_affine_tensor"] = outputs["sm"]["frames"][-1]
 
-    embeddings.update(
-        compute_renamed_ground_truth(
-            embeddings,
-            outputs["sm"]["positions"][-1],
-        )
-    )
+###############################################################
+#OPtimizer loop
+###############################################################
+# optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+# n_epochs=1000
+# M = N -11
+# M_limit = 50
+# for i in range(n_epochs):
+#     optimizer.zero_grad()         
 
-    loss = fape_loss(
-        out =outputs,
-        batch = embeddings,
-        config = config.loss.fape)
-    loss.backward()
-    optimizer.step()
+#     outputs = {}
+#     outputs["sm"]  = model(
+#             {
+#                 "pair": embeddings["pair"][None],
+#                 "single":embeddings["single"][None]
+#             },
+#             embeddings["aatype"][None],
+#             mask=embeddings["seq_mask"][None],
+#             inplace_safe=False,
+#             _offload_inference=False,
 
-    print("Iter=%i; M=%i; Loss=%.2f"%(i,M, loss.item()))
+#         )
+#     outputs["final_atom_positions"] = atom14_to_atom37(
+#         outputs["sm"]["positions"][-1], embeddings
+#     )
+#     outputs["final_atom_mask"] = embeddings["atom37_atom_exists"]
+#     outputs["final_affine_tensor"] = outputs["sm"]["frames"][-1]
 
-    if M>= M_limit:
-        M-=1
+#     embeddings.update(
+#         compute_renamed_ground_truth(
+#             embeddings,
+#             outputs["sm"]["positions"][-1],
+#         )
+#     )
+
+#     loss = fape_loss(
+#         out =outputs,
+#         batch = embeddings,
+#         config = config.loss.fape)
+#     loss.backward()
+#     optimizer.step()
+
+#     print("Iter=%i; M=%i; Loss=%.2f"%(i,M, loss.item()))
+
+#     if M>= M_limit:
+#         M-=1
 
 
-    if i%50 == 0:
-        output_single_pdb(all_atom_positions=outputs["final_atom_positions"].detach().cpu().numpy(),
-                        all_atom_mask=outputs["final_atom_mask"].detach().cpu().numpy(),
-                        aatype=embeddings["aatype"].detach().cpu().numpy(),
-                        file="../cryofold/SparseIPA/%s.pdb"%str(i+1).zfill(5),
-                        chain_index=embeddings["asym_id"].detach().cpu().numpy(),
-                        residue_index=embeddings["residue_index"].detach().cpu().numpy())
+#     if i%50 == 0:
+#         output_single_pdb(all_atom_positions=outputs["final_atom_positions"].detach().cpu().numpy(),
+#                         all_atom_mask=outputs["final_atom_mask"].detach().cpu().numpy(),
+#                         aatype=embeddings["aatype"].detach().cpu().numpy(),
+#                         file="../cryofold/SparseIPA/%s.pdb"%str(i+1).zfill(5),
+#                         chain_index=embeddings["asym_id"].detach().cpu().numpy(),
+#                         residue_index=embeddings["residue_index"].detach().cpu().numpy())
 
 # dist = torch.sqrt(((final_atom_positions[None,:,1] - final_atom_positions[:,None,1])**2).sum(dim=-1))

@@ -41,7 +41,7 @@ from flexfold.pose import PoseTracker
 from flexfold.core import vol_real, get_cc, fourier_corr, output_single_pdb, struct_to_pdb
 from pytorch_lightning.strategies import DDPStrategy
 
-from openfold.utils.loss import fape_loss, compute_renamed_ground_truth
+# from openfold.utils.loss import fape_loss, compute_renamed_ground_truth
 from torch.utils.data import Dataset, DataLoader
 
 from flexfold.scripts.train import LitDataModule,LitHetOnlyVAE, save_checkpoint, save_config, add_args
@@ -49,6 +49,37 @@ from pytorch_lightning.plugins.environments import MPIEnvironment
 
 logger = logging.getLogger(__name__)
 
+from openfold.utils.loss import backbone_loss
+
+def fape_loss(
+    out,
+    batch,
+    config,
+) -> torch.Tensor:
+    traj = out["sm"]["frames"]
+    asym_id = batch.get("asym_id")
+    if asym_id is not None:
+        intra_chain_mask = (asym_id[..., None] == asym_id[..., None, :]).to(dtype=traj.dtype)
+        intra_chain_bb_loss = backbone_loss(
+            traj=traj,
+            pair_mask=intra_chain_mask,
+            **{**batch, **config.intra_chain_backbone},
+        )
+        interface_bb_loss = backbone_loss(
+            traj=traj,
+            pair_mask=1. - intra_chain_mask,
+            **{**batch, **config.interface_backbone},
+        )
+        weighted_bb_loss = (intra_chain_bb_loss * config.intra_chain_backbone.weight
+                            + interface_bb_loss * config.interface_backbone.weight)
+    else:
+        bb_loss = backbone_loss(
+            traj=traj,
+            **{**batch, **config.backbone},
+        )
+        weighted_bb_loss = bb_loss * config.backbone.weight
+
+    return torch.mean(weighted_bb_loss)
 
 
 class LitTarget(LitHetOnlyVAE):
@@ -73,17 +104,32 @@ class LitTarget(LitHetOnlyVAE):
 
         struct = self.model.decoder.structure_decoder(z)
 
-        struct.update(
-            compute_renamed_ground_truth(
-                struct,
-                struct["sm"]["positions"][-1],
-            )
+
+
+        # Struct violations loss
+        struct_violations = find_structural_violations(
+            struct,
+            struct["sm"]["positions"][-1],
+            **self.model.decoder.loss_config.violation,
         )
+        viol_loss = violation_loss(
+                    struct_violations,
+                    **{**struct, **self.model.decoder.loss_config.violation},
+                )
+
+        # Torsion angle loss
+        chi_loss = supervised_chi_loss(
+                    struct["sm"]["angles"],
+                    struct["sm"]["unnormalized_angles"],
+                    **{**struct, **self.model.decoder.loss_config.supervised_chi},
+                )
 
         loss = fape_loss(
             out =struct,
             batch = struct,
             config = self.model.decoder.loss_config.fape)
+
+        loss += chi_loss *self.args.chi_loss_weight + viol_loss *self.args.viol_loss_weight
         
         # Backward pass
         self.manual_backward(loss)
@@ -97,9 +143,9 @@ class LitTarget(LitHetOnlyVAE):
         if self.global_step %100 == 0:
             if self.trainer.is_global_zero:
                 logger.info("Writing checkpoint at step %s ..."%self.global_step)
-                out_weights = "{}/weights.{}.pkl".format(self.args.outdir, self.current_epoch)
-                out_z = "{}/z.{}.pkl".format(self.args.outdir, self.current_epoch)
-                out_pdb = "{}/fit.{}.pdb".format(self.args.outdir, self.current_epoch)
+                out_weights = "{}/weights.{}.pkl".format(self.args.outdir, self.global_step)
+                out_z = "{}/z.{}.pkl".format(self.args.outdir, self.global_step)
+                out_pdb = "{}/fit.{}.pdb".format(self.args.outdir, self.global_step)
 
                 
                 save_checkpoint(self.model, self.optimizers(), self.current_epoch, z_mu, z_logvar, out_weights, out_z)

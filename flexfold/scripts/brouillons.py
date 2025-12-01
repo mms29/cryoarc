@@ -454,6 +454,31 @@ from umap import UMAP
 from sklearn.decomposition import PCA
 import os 
 
+# base_dirs=[
+# "/home/vuillemr/flexfold/data/cryofold/AKMD/snr1",
+# "/home/vuillemr/flexfold/data/cryofold/AKMD/snr0.1",
+# "/home/vuillemr/flexfold/data/cryofold/AKMD/snr0.01",
+# "/home/vuillemr/flexfold/data/cryofold/AKMD/snr0.005",
+# "/home/vuillemr/flexfold/data/cryofold/AKMD/snr0.001"]
+
+# noise_levels = [0,-1,-2,-2.5,-3]
+
+# methods=["avg",
+#          "run_cryodrgn", "run_cryodrgn_sgd", 
+#          "run_drgnai",
+#          "run","run_sgd", "run_conv_sgd", "run_fourier","run_fourier_sgd","run_conv_fourier_sgd", "run_conv_pair_fourier", "run_conv_pair_fourier_sgd",
+#          "run_conv_sgd_beta", "run_conv_sgd_highlr", "run_conv_sgd_highwd", "run_conv_sgd_low_struct_loss", "run_conv_sgd_table", "run_conv_pair_sgd_4blocks_lowlr"]
+# names=["Homogeneous",
+#        "CryoDRGN", "CryoDRGN-Pose", 
+#        "DRGN-AI",
+#        "MLP-MLP","MLP-MLP-Pose", "CNN-MLP-Pose", "MLP-MLP-FT","MLP-MLP-FT-Pose","CNN-MLP-FT-Pose","CNN-Pair-FT","CNN-Pair-FT-Pose",
+#        "Beta", "HighLR", "HighWD",  "LowStructLoss", "Table", "PairLowLR4Blocks"
+#        ]
+# prefix = "/home/vuillemr/flexfold/data/cryofold/AKMD/"
+# methods_ff =[ m for m in names if not ("DRGN" in m or "Homogeneous" in m) ]
+
+# colors =   [plt.cm.Greens(v) for v in np.linspace(0.7, 0.8, 1) ] + [plt.cm.Reds(v) for v in np.linspace(0.6, 0.8,3) ] + [plt.cm.Blues(v) for v in np.linspace(0.5, 0.8, len(methods_ff)) ]
+
 base_dirs=[
 "/home/vuillemr/flexfold/data/cryofold/AKMD/snr1",
 "/home/vuillemr/flexfold/data/cryofold/AKMD/snr0.1",
@@ -466,18 +491,18 @@ noise_levels = [0,-1,-2,-2.5,-3]
 methods=["avg",
          "run_cryodrgn", "run_cryodrgn_sgd", 
          "run_drgnai",
-         "run","run_sgd", "run_conv_sgd", "run_fourier","run_fourier_sgd","run_conv_fourier_sgd", "run_conv_pair_fourier", "run_conv_pair_fourier_sgd",
-         "run_conv_sgd_beta", "run_conv_sgd_highlr", "run_conv_sgd_highwd", "run_conv_sgd_low_struct_loss", "run_conv_sgd_table", "run_conv_pair_sgd_4blocks_lowlr"]
+         "run_table_pair","run_table_pair_sgd", "run_conv_sgd"]
 names=["Homogeneous",
        "CryoDRGN", "CryoDRGN-Pose", 
        "DRGN-AI",
-       "MLP-MLP","MLP-MLP-Pose", "CNN-MLP-Pose", "MLP-MLP-FT","MLP-MLP-FT-Pose","CNN-MLP-FT-Pose","CNN-Pair-FT","CNN-Pair-FT-Pose",
-       "Beta", "HighLR", "HighWD",  "LowStructLoss", "Table", "PairLowLR4Blocks"
+       "run_table_pair", "run_table_pair_sgd", "run_conv_sgd"
        ]
-prefix = "/home/vuillemr/flexfold/data/cryofold/AKMD/"
+prefix = "/home/vuillemr/flexfold/data/cryofold/AKMD/table"
 methods_ff =[ m for m in names if not ("DRGN" in m or "Homogeneous" in m) ]
 
 colors =   [plt.cm.Greens(v) for v in np.linspace(0.7, 0.8, 1) ] + [plt.cm.Reds(v) for v in np.linspace(0.6, 0.8,3) ] + [plt.cm.Blues(v) for v in np.linspace(0.5, 0.8, len(methods_ff)) ]
+
+
 
 # base_dirs=[
 # # "/home/vuillemr/flexfold/data/cryofold/AKMD/snr1",
@@ -657,6 +682,32 @@ fig.savefig(prefix+"summary_rmsd.png", dpi=300)
 
 
 
+from flexfold.scripts.rln2xmp import read_star_multi, write_star_from_dicts, print_summary
+
+stack_file = "particles_1_100K.mrcs"
+input_star = "data/cryofold/EMPIAR-12093/particles_1_100K.star"
+output_star = "data/cryofold/EMPIAR-12093/particles_1_100K_downsampled.star"
+
+
+stack_file = "particles_2_100K.mrcs"
+input_star = "data/cryofold/EMPIAR-12093/particles_2_100K.star"
+output_star = "data/cryofold/EMPIAR-12093/particles_2_100K_downsampled.star"
+
+stack_file = "particles_1.mrcs"
+input_star = "data/cryofold/EMPIAR-12093/particles_1.star"
+output_star = "data/cryofold/EMPIAR-12093/particles_1_downsampled.star"
+
+stack_file = "particles_2.mrcs"
+input_star = "data/cryofold/EMPIAR-12093/particles_2.star"
+output_star = "data/cryofold/EMPIAR-12093/particles_2_downsampled.star"
+
+star = read_star_multi(input_star)
+print_summary(star)
+N = len(star["data_particles"]["_rlnImageName"])
+star["data_particles"]["_rlnImageName"] = ["%s@%s"%(str(i+1).zfill(7), stack_file) for i in range(N)]
+star["data_optics"]["_rlnImagePixelSize"] = [1.656, 1.656]
+star["data_optics"]["_rlnImageSize"] = [200, 200]
+write_star_from_dicts(star, output_star)
 
 
 
@@ -665,11 +716,91 @@ fig.savefig(prefix+"summary_rmsd.png", dpi=300)
 
 
 
+from flexfold.scripts.rln2xmp import read_star_multi, write_star_from_dicts, print_summary
+
+input_star = "data/cryofold/EMPIAR-10330/FinalRefinement-OriginalParticles-PfCRT.star"
+output_star = "data/cryofold/EMPIAR-10330/particles.star"
+
+star = read_star_multi(input_star)
+print_summary(star)
+N = len(star["data_images"]["_rlnImageName"])
+star["data_images"]["_rlnAmplitudeContrast"] = [0.07 for i in range(N)]
+
+write_star_from_dicts(star, output_star)
 
 
 
+from flexfold.models import mmcif_feats_from_file, map_sequences
+import torch 
+import openfold.np.residue_constants as rc
+import itertools
+import numpy as np
+
+embeddings = torch.load("data/cryofold/EMPIAR-10330/embeddings.pt",map_location="cpu")
+
+target_feats =  mmcif_feats_from_file("data/cryofold/EMPIAR-10330//6UKJ.cif")
+
+def struct_to_seqs(struct):
+    return {j.item():"".join([rc.restypes_with_x[i]   for i in struct["aatype"][struct["asym_id"] == j]]) for j in torch.unique(struct["asym_id"])}
+
+def transpose_seqs(seqs, transpose):
+    asym_id = t["asym_id"]
+    order = np.unique(t["asym_id"])[[i for i in transpose]]
+    order_ind = np.concatenate([np.where(asym_id==i)[0] for i in order])
+    new_asym_id = np.concatenate([(i+1)*np.ones((asym_id==o).sum()) for i,o in enumerate(order)])
+
+    out = {k:v for k,v in t.items()}
+    out["all_atom_positions"] = t["all_atom_positions"][order_ind]
+    out["aatype"] = t["aatype"][order_ind]
+    out["asym_id"] = new_asym_id
+    return out
+
+seq1 = struct_to_seqs(target_feats)
+seq2 = struct_to_seqs(embeddings)
+
+len_res = len(target_feats["aatype"])
+len_chain = len(seq1)
+perms = list(itertools.permutations(range(len_chain)))
+
+matched_seqs_perms = []
+for p in perms:
+    print("Mapping permutation :", p)
+    matched_seqs = 0
+    for i, pi in enumerate(p):
+        s1 = list(seq1.values())[i]
+        s2 = list(seq2.values())[pi]
+        mapping = map_sequences(s1, s2) 
+        matched = sum([m!=-1 for m in mapping])
+        matched_seqs+= matched
+
+    print("N res matched : ", matched_seqs, "/", len_res)
+    matched_seqs_perms.append(matched_seqs)
+
+best_perm = np.argmax(matched_seqs_perms)
+mappings = []
+for i, pi in enumerate(perms[best_perm]):
+    s1 = list(seq1.values())[i]
+    s2 = list(seq2.values())[pi]
+    mapping = map_sequences(s1, s2) 
+    mappings.append(mapping)
+
+print("Best sequence alignemnt aligned ", matched_seqs_perms[best_perm],  "/", len_res, "residues")
+        tmp = transpose_chains(target_feats, p)
+        print((tmp["aatype"] == embeddings["aatype"]))
+        if all(tmp["aatype"] == embeddings["aatype"]):
+            target_feats = tmp
+            break
 
 
+        mapping = map_sequences(seq1, seq2)
+        if -1 in mapping:
+            raise NotImplementedError() #FIXME
+        target_feats_mapped = {k:v.clone() for k,v in {k2:v2 for k2,v2 in embeddings.items() if k2 in target_keys}.items()}
+        target_feats_mapped["all_atom_positions"] = target_feats_mapped["final_atom_positions"]
+        del target_feats_mapped["final_atom_positions"]
+        for k,v in target_feats_mapped.items():
+            v[mapping] = target_feats[k] 
+        target_feats = target_feats_mapped
 
 
 
@@ -980,5 +1111,220 @@ plt.close(fig)
 
 
 
+import torch 
+from cryodrgn import config
+from cryodrgn.utils import load_pkl
+import matplotlib.pyplot as plt
+from flexfold.fsc import fourier_shell_correlation, fsc_auc,fsc_thresh, spherical_soft_mask, fourier_mask
+from matplotlib.ticker import FuncFormatter
+import seaborn as sns
+from flexfold import dataset
+from flexfold.pose import PoseTracker
+from flexfold.lattice import Lattice
+from cryodrgn import __version__, ctf
+from flexfold.core import ifft2_center, unsymmetrize_ht, fft3center, ifft3center, dcd2numpyArr, numpyArr2dcd, get_voxel_mask, vol_real_mask
+from cryodrgn.mrcfile import parse_mrc, write_mrc
+import torch.nn.functional as F
+import argparse
+import math
+from mpmath import erfinv
+import tqdm
+import os
 
 
+volume_half1, header = parse_mrc("/home/vuillemr/cryofold/HER2/data/run/backproject_half1.mrc")
+volume_half2, header = parse_mrc("/home/vuillemr/cryofold/HER2/data/run/backproject_half2.mrc")
+apix = header.apix
+
+fsc_curve,freqs = fourier_shell_correlation(torch.tensor(volume_half1),
+                                            torch.tensor(volume_half2),None, apix=1.1599)
+res_05, res_0143 = fsc_thresh(fsc_curve,freqs )
+
+volume_half1_2, header = parse_mrc("/home/vuillemr/cryofold/HER2/data/backproject_real/backproject_half1.mrc")
+volume_half2_2, header = parse_mrc("/home/vuillemr/cryofold/HER2/data/backproject_real/backproject_half2.mrc")
+apix = header.apix
+fsc_curve_2,freqs_2 = fourier_shell_correlation(torch.tensor(volume_half1_2),
+                                            torch.tensor(volume_half2_2),None, apix=1.1599)
+res_05_2, res_0143_2 = fsc_thresh(fsc_curve_2,freqs_2 )
+
+volume_half1_3, header = parse_mrc("/home/vuillemr/cryofold/HER2/data/backproject_100K/half_map_a.mrc")
+volume_half2_3, header = parse_mrc("/home/vuillemr/cryofold/HER2/data/backproject_100K/half_map_b.mrc")
+apix = header.apix
+fsc_curve_3,freqs_3 = fourier_shell_correlation(torch.tensor(volume_half1_3),
+                                            torch.tensor(volume_half2_3),None, apix=1.1599)
+res_05_3, res_0143_3 = fsc_thresh(fsc_curve_3,freqs_3 )
+
+
+label = "Warp ( %.2f $\AA$)" %res_05
+label_2 = "Real ( %.2f $\AA$)" %res_05_2
+label_3 = "Fourier ( %.2f $\AA$)" %res_05_3
+
+fig, ax = plt.subplots(1,1)
+ax.plot(freqs, fsc_curve, label=label)
+ax.plot(freqs_2, fsc_curve_2, label=label_2)
+ax.plot(freqs_3, fsc_curve_3, label=label_3)
+def fraction_formatter(x, pos):
+    if x == 0:
+        return "0"
+    return f"1/{x**-1:.1f}"   # reciprocal with 2 decimal places
+ax.xaxis.set_major_formatter(FuncFormatter(fraction_formatter))
+ax.axhline(0.143, c="red")
+ax.axhline(0.5, c="green")
+ax.axvline(1/res_05, c="red")
+ax.axvline(1/res_0143, c="green")
+ax.legend()
+ax.set_xlabel("Resolution ($1/\AA$)")
+ax.set_ylabel("Fourier Shell Correlation")
+ax.set_title("AVG FSC Resolution %.2f $\AA$ (%.2f $\AA$)"%(res_0143, res_05))
+fig.savefig("/home/vuillemr/cryofold/HER2/data/run/fsc.png")
+plt.close(fig)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+from cryodrgn.utils import load_pkl, save_pkl
+from umap import UMAP
+from sklearn.decomposition import PCA
+import os 
+import pickle
+
+prefix = "/home/vuillemr/flexfold/data/cryofold/jillsData/particles/run_pair"
+filename = prefix+ "/z.9.pkl"
+with open(filename, "rb") as f:
+    z_mu = pickle.load(f)
+    z_logvar = pickle.load(f)
+# dimred = UMAP(n_components=2, n_neighbors=50, min_dist=0.1)
+# data_umap.append(dimred.fit_transform(z)[:,:2])
+dimred = PCA(n_components=2)
+data_pca = dimred.fit_transform(z_mu)[:,:2]
+data_pca_var = np.linalg.norm(z_logvar, axis=-1) < 10.8
+
+
+cmap = "jet"
+
+fig, ax = plt.subplots(3,3, figsize=(15,15), layout="constrained")  
+ax[0,0].scatter(z_mu[:,0],z_mu[:,1], c=data_pca_var, cmap=cmap, s=.01, alpha=0.5)
+ax[0,1].scatter(z_mu[:,0],z_mu[:,2], c=data_pca_var, cmap=cmap, s=.01, alpha=0.5)
+ax[0,2].scatter(z_mu[:,0],z_mu[:,3], c=data_pca_var, cmap=cmap, s=.01, alpha=0.5)
+
+ax[1,0].scatter(z_mu[:,1],z_mu[:,0], c=data_pca_var, cmap=cmap, s=.01, alpha=0.5)
+ax[1,1].scatter(z_mu[:,1],z_mu[:,2], c=data_pca_var, cmap=cmap, s=.01, alpha=0.5)
+ax[1,2].scatter(z_mu[:,1],z_mu[:,3], c=data_pca_var, cmap=cmap, s=.01, alpha=0.5)
+
+ax[2,0].scatter(z_mu[:,2],z_mu[:,0], c=data_pca_var, cmap=cmap, s=.01, alpha=0.5)
+ax[2,1].scatter(z_mu[:,2],z_mu[:,1], c=data_pca_var, cmap=cmap, s=.01, alpha=0.5)
+ax[2,2].scatter(z_mu[:,2],z_mu[:,3], c=data_pca_var, cmap=cmap, s=.01, alpha=0.5)
+fig.savefig(prefix+"/summary_pca.png", dpi=300)
+
+
+with open(prefix+ "/z.999.pkl", "wb") as f:
+    z_mu = pickle.dump(f, z_mu[data_pca_var])
+    z_logvar = pickle.dump(f)
+
+
+
+
+
+
+
+import torch
+from flexfold.core import struct_to_pdb, output_single_pdb
+from openfold.utils.tensor_utils import tensor_tree_map
+import numpy as np 
+from openfold.np import residue_constants, protein
+from openfold.config import model_config
+from openfold.model.model import AlphaFold
+from openfold.model.structure_module import StructureModule
+from flexfold.models import import_weights
+import torch.nn as nn
+from openfold.utils.feats import (
+    atom14_to_atom37,
+)
+class Model(nn.Module):
+    def __init__(self, config):
+        super(Model, self).__init__()
+        self.structure_module =StructureModule(
+            **config
+            )
+    def forward(self, *args, **kwargs):
+        return self.structure_module(*args, **kwargs)
+
+
+struct = torch.load("/home/vuillemr/cryofold/newmd/2pbi_A_embeddings.pt")
+struct_to_pdb( tensor_tree_map(lambda x: x.detach().cpu().numpy(), struct),"/home/vuillemr/cryofold/newmd/test.pdb" )
+
+device="cuda"
+
+config = model_config(
+    "finetuning", 
+    train=False, 
+    low_prec=False,
+) 
+model = Model(config.model.structure_module).to(device)
+model = import_weights(model, "../openfold/openfold/resources/openfold_params/finetuning_no_templ_1.pt")
+
+
+structure_input = {
+    "pair": struct["pair"],
+    "single": struct["single"]
+}
+
+outputs = {}
+outputs["sm"] =  model(evoformer_output_dict=structure_input, aatype=struct["aatype"])
+
+
+outputs["final_atom_positions"] = atom14_to_atom37(
+    outputs["sm"]["positions"][-1], struct
+)
+outputs["final_atom_mask"] = struct["atom37_atom_exists"]
+outputs["final_affine_tensor"] = outputs["sm"]["frames"][-1]
+
+
+output_single_pdb(
+    all_atom_positions= outputs["final_atom_positions"].cpu().detach().numpy(), 
+    aatype=struct["aatype"].cpu().detach().numpy(), 
+    all_atom_mask=outputs["final_atom_mask"].cpu().detach().numpy(), 
+    file="/home/vuillemr/cryofold/newmd/test2.pdb" , 
+    chain_index=None, 
+    residue_index=struct["residue_index"].cpu().detach().numpy(), 
+    b_factors=None
+)

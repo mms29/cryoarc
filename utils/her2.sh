@@ -49,4 +49,4 @@ cryodrgn train_vae $BASE_DIR/particles.mrcs  \
     --pretrain 2
 
 RUN_DIR=$BASE_DIR/run
-python ./flexfold/scripts/analyze.py  -o $RUN_DIR/analysis $RUN_DIR 0 --pc 2 
+python ./flexfold/scripts/analyze.py  -o $RUN_DIR/analysis $RUN_DIR 1 --pc 2 

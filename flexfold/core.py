@@ -71,8 +71,8 @@ def plot_loss(infile, outfile):
             loss = train_step[losses[ii]+"_step"]
             step = train_step["step"] * (train_step["epoch"].max() - train_step["epoch"].min()) / (train_step["step"].max() - train_step["step"].min())
             if len(step)>50:
-                w = min(len(step)//10,10)
-                ax[x,y].plot(step, loss, alpha=0.5, c=col)
+                w = len(step)//10
+                # ax[x,y].plot(step, loss, alpha=0.5, c=col)
                 ax[x,y].plot(movavg_step(step,w), movavg(loss,w), label = "training", c=col)
             else:
                 ax[x,y].plot(step, loss, label = "training", c=col)
@@ -84,8 +84,8 @@ def plot_loss(infile, outfile):
                 loss = val_epoch["val_" +losses[ii]+"_epoch"]
                 step = val_epoch["epoch"]
                 if len(step)>50:
-                    w = min(len(step)//10,10)
-                    ax[x,y].plot(step, loss, alpha=0.5, c=valcol)
+                    w = len(step)//10
+                    # ax[x,y].plot(step, loss, alpha=0.5, c=valcol)
                     ax[x,y].plot(movavg_step(step,w), movavg(loss,w), label = "validation", c=valcol)
                 else:
                     ax[x,y].plot(step, loss, label = "validation", c=valcol)
@@ -205,6 +205,11 @@ def fourier_corr(A: torch.Tensor, B: torch.Tensor,  eps:float=1e-8) -> torch.Ten
     denom = torch.sqrt(torch.sum(torch.abs(A) ** 2, dim=(-1,-2)) * torch.sum(torch.abs(B) ** 2, dim=(-1,-2)))
     return (num / (denom+ eps)).real
 
+def fourier_corr2(A: torch.Tensor, B: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+    num = torch.sum(A * torch.conj(B), dim=(-1, -2))
+    denom = torch.sum(torch.abs(A)**2, dim=(-1, -2)) * torch.sum(torch.abs(B)**2, dim=(-1, -2))
+    corr2 = torch.abs(num)**2 / (denom + eps)
+    return corr2.real
 
 def get_cc(A: torch.Tensor, B: torch.Tensor, eps:float=1e-8) -> torch.Tensor:
     num = torch.sum(A * B, dim=(-1,-2))

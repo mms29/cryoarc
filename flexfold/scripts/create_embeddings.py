@@ -1,36 +1,30 @@
 
 import argparse
-import logging
-import os
-import sys
 import json
-import pytorch_lightning as pl
-from pytorch_lightning.callbacks.lr_monitor import LearningRateMonitor
-from pytorch_lightning.callbacks import DeviceStatsMonitor
-from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
-from pytorch_lightning.loggers import WandbLogger
-from pytorch_lightning.strategies import DDPStrategy, DeepSpeedStrategy
-from pytorch_lightning.plugins.environments import MPIEnvironment
-from pytorch_lightning import seed_everything
 import torch
-import wandb
-import tqdm
-from openfold.config_saxs import model_config_saxs
 from openfold.config import model_config
-from openfold.utils.logger import PerformanceLoggingCallback
-from pytorch_lightning.loggers import TensorBoardLogger
-
-from openfold.utils.saxs_utils import ( SaxsWrapper, SaxsDataModule, resume_ckpt)
 from openfold.model.model import AlphaFold
-
 from openfold.utils.tensor_utils import tensor_tree_map
-from openfold.np import residue_constants, protein
 
 import numpy as np
-import time
 
-from openfold.data.data_modules import OpenFoldDataModule, OpenFoldSingleDataset
-from openfold.utils.saxs_utils import ( SaxsWrapper, SaxsDataModule, resume_ckpt, output_single_pdb)
+from openfold.data.data_modules import  OpenFoldSingleDataset
+from openfold.utils.import_weights import convert_deprecated_v1_keys
+
+from flexfold.core import output_single_pdb
+
+def resume_ckpt(resume_from_ckpt, model, config):
+    sd = torch.load(resume_from_ckpt)
+    if "model_state_dict" not in sd :
+        sd = convert_deprecated_v1_keys(sd)
+        incompatible_keys = model.load_state_dict(sd, strict=False)
+    else:
+        if not config.model.saxs.enabled:
+            for k in list(sd["model_state_dict"]):
+                if "saxs" in k:
+                    sd["model_state_dict"].pop(k)
+        model.load_state_dict(sd["model_state_dict"], strict=False)
+    return model
 
 
 def main(args):
@@ -41,7 +35,7 @@ def main(args):
 
     # Model
     model = AlphaFold(config)
-    model = resume_ckpt("./openfold/resources/openfold_params/finetuning_no_templ_1.pt", model, config)
+    model = resume_ckpt("../openfold/openfold/resources/openfold_params/finetuning_no_templ_1.pt", model, config)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
 
@@ -71,9 +65,6 @@ def main(args):
         output = model(batch)
 
     print("pLDDT : %.2f "%torch.mean(output["plddt"]).detach().cpu().numpy())
-    ###########################################" CRYOFOLD EMBEDDINGS"
-    ###########################################" CRYOFOLD EMBEDDINGS"
-    ###########################################" CRYOFOLD EMBEDDINGS"
 
     del output["msa"]
     del output["sm"]
@@ -86,7 +77,6 @@ def main(args):
     del output["plddt"]
 
     del batch["bert_mask"]
-    # del batch["alt_chi_angles"]
     del batch["extra_deletion_value"]
     del batch["extra_has_deletion"]
     del batch["extra_msa"]
@@ -101,14 +91,11 @@ def main(args):
     del batch["template_all_atom_mask"]
     del batch["template_all_atom_positions"]
     del batch["template_alt_torsion_angles_sin_cos"]
-    # del batch["template_backbone_rigid_mask"]
-    # del batch["template_backbone_rigid_tensor"]
     del batch["template_mask"]
     del batch["template_pseudo_beta"]
     del batch["template_pseudo_beta_mask"]
     del batch["template_sum_probs"]
     del batch["template_torsion_angles_mask"]
-    # del batch["template_torsion_angles_sin_cos "]
     del batch["true_msa"]
     del batch["batch_idx"]
 
