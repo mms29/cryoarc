@@ -553,13 +553,18 @@ traj_center = centers[ordered_idx]
 old_to_new = {old: new for new, old in enumerate(ordered_idx)}
 traj_labels = np.array([old_to_new[l] for l in labels])
 
-cmap = "plasma"
+cmap = "hsv"
 fig, ax = plt.subplots(1,1, figsize=(10,10))
 ax.scatter(data[:,0], data[:,1], cmap=cmap, alpha=0.5, c=traj_labels, s =10)
 ax.plot(traj_center[:,0], traj_center[:,1], "-", c="black")
 ax.scatter(traj_center[:,0], traj_center[:,1],s=200, cmap=cmap, c=[i for i in range(n_clusters)], edgecolors="black")
-fig.savefig("/home/vuillemr/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run2/analysis/test_umap.png")
+fig.savefig("/home/vuillemr/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run2/analysis/test_umap2.png")
 
+
+cmap = "hsv"
+fig, ax = plt.subplots(1,1, figsize=(10,10))
+ax.scatter(data[:,0], data[:,1], cmap=cmap, alpha=0.5, c=np.arange(12500), s =10)
+fig.savefig("/home/vuillemr/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run2/analysis/test_umap2.png")
 
 
 traj_center = centers[ordered_idx]
@@ -786,3 +791,178 @@ for i in range(z_traj_downsampled.shape[0]):
     prefix = "/home/vuillemr/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run_cryodrgn/analyze.100/pc_traj/%s"%str(i+1).zfill(5)
     vol = model.decoder.eval_volume(lattice.coords, D, lattice.extent,norm, z_traj_downsampled[i])
     write_mrc(prefix+".mrc", np.array(vol.cpu()).astype(np.float32), Apix=3.0)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#########################################################################################################
+#########################################################################################################
+#########################################################################################################
+#########################################################################################################
+#########################################################################################################
+#########################################################################################################
+#########################################################################################################
+#########################################################################################################
+#########################################################################################################
+
+import torch 
+from cryodrgn.models import HetOnlyVAE
+from cryodrgn import config
+from cryodrgn.utils import load_pkl
+import matplotlib.pyplot as plt
+
+ax_col = "darkslategray"
+plt.rcParams.update({
+    "axes.labelcolor":ax_col,
+    "axes.labelsize": 18,
+    "axes.edgecolor": ax_col,  # default spine color
+    "xtick.color": ax_col,
+    "ytick.color": ax_col,
+    "xtick.labelsize": 16,
+    "ytick.labelsize": 16,
+    'font.size': 16,
+    'text.color': ax_col
+})
+
+
+"data/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run_new_pair/weights.14.pkl"
+zfile = "data/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run_new_pair/z.14.pkl"
+
+z = load_pkl(zfile)
+zdim = z.shape[-1]
+
+dimred = UMAP(n_components=2, random_state=42, n_neighbors =200, min_dist=0.01)
+data_flex = dimred.fit_transform(z)
+
+dimred_pca = PCA(n_components=2)
+data_flex_pca = dimred_pca.fit_transform(z)
+
+cmap = "hsv"
+fig, ax = plt.subplots(1,1, figsize=(10,10))
+ax.scatter(data[:,0], data[:,1], cmap="hsv", alpha=0.1, c=np.arange(100000), s =5)
+fig.savefig("/home/vuillemr/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run_new_pair/test_umap.png")
+
+
+import glob
+from Bio.SVDSuperimposer import SVDSuperimposer
+from Bio.PDB import PDBParser, Superimposer, is_aa
+from Bio.PDB import PDBIO
+
+def get_coordinates(structure):
+    coordinates = []
+    for model in structure:
+        for chain in model:
+            for residue in chain:
+                for atom in residue:
+                    coordinates.append(atom.coord)
+    return np.array(coordinates)
+
+parser = PDBParser(QUIET=True)
+
+pdb_files = glob.glob("data/cryofold/cryobench_IgD/IgG-1D/pdbs/*pdb")
+pdb_files.sort()
+
+coordinates=[]
+for f in pdb_files:
+    print(f)
+    structure = parser.get_structure("", f)
+    coordinates.append(get_coordinates(structure))
+
+
+
+dimred_gt = PCA(n_components=2)
+# dimred = PCA(n_components=2)
+data_gt = dimred_gt.fit_transform(np.array(coordinates).reshape(100,-1))
+
+cmap = "hsv"
+fig, ax = plt.subplots(1,2, figsize=(10,5), layout="constrained")
+ax[0].scatter(data_gt[:,0], data_gt[:,1], cmap="hsv", alpha=1, c=np.roll(np.arange(100), 86), s =50)
+ax[0].spines['top'].set_visible(False)
+ax[0].spines['right'].set_visible(False)
+# ax[0].spines['bottom'].set_visible(False)
+# ax[0].spines['left'].set_visible(False)
+ax[0].set_xticks([])
+ax[0].set_yticks([])
+ax[0].set_xticklabels([])
+ax[0].set_yticklabels([])
+ax[0].set_ylabel("PC2")
+ax[0].set_xlabel("PC1")
+ax[0].set_title("GT")
+
+ax[1].scatter(data_flex_pca[:,0], data_flex_pca[:,1], cmap="hsv", alpha=0.11, c=np.roll(np.arange(100000),39202), s =1)
+ax[1].spines['top'].set_visible(False)
+ax[1].spines['right'].set_visible(False)
+# ax[1].spines['bottom'].set_visible(False)
+# ax[1].spines['left'].set_visible(False)
+ax[1].set_xticks([])
+ax[1].set_yticks([])
+ax[1].set_xticklabels([])
+ax[1].set_yticklabels([])
+ax[1].set_ylabel("PC2")
+ax[1].set_xlabel("PC1")
+ax[1].set_title("CryoARC")
+fig.savefig("/home/vuillemr/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run_new_pair/circle.png",dpi=300)
+
+
+
+
+
+
+########################################################################""
+import torch 
+from flexfold.models import HetOnlyVAE
+from cryodrgn import config
+from cryodrgn.utils import load_pkl
+import matplotlib.pyplot as plt
+from flexfold.core import struct_to_pdb
+from openfold.utils.tensor_utils import tensor_tree_map
+
+config_file = "data/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run_new_pair/config.yaml"
+weight_file = "data/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run_new_pair/weights.14.pkl"
+
+##################################################""
+# LOAD MODEL and WEIGHTS
+##################################################""
+zfile = "data/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run_new_pair/z.14.pkl"
+
+z = load_pkl(zfile)
+zdim = z.shape[-1]
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+cfg = config.load(config_file)
+D = cfg["lattice_args"]["D"]  # image size + 1
+zdim = cfg["model_args"]["zdim"]
+norm = [float(x) for x in cfg["dataset_args"]["norm"]]
+model, lattice = HetOnlyVAE.load(cfg,weight_file, device=device)
+model.eval()
+model = model.to(device)
+
+
+z_traj = z.reshape(10,-1,4).mean(axis=1)
+
+with torch.no_grad():
+    for i, z_ in enumerate(z_traj):
+        print(i)
+        z_val = torch.tensor([z_], device=device)
+        print(z_val)
+        struct0 = model.decoder.structure_decoder(z_val)
+        struct0 = tensor_tree_map(lambda x: x[-1].detach().cpu().numpy(), struct0)
+        struct_to_pdb(struct0, "data/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run_new_pair/circle_%s.pdb"%str(i+1).zfill(3))
+
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.colors import to_hex
+cmap = plt.get_cmap("hsv")
+colors = [cmap(i) for i in np.linspace(0,1,10)]
+hex_colors = [to_hex(c) for c in colors]
+

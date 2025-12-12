@@ -70,3 +70,19 @@ cryodrgn train_vae     $BASE_DIR/sorted_particles.128.txt  \
     --dec-dim 256 \
     --dec-layers 3 \
 cryodrgn analyze -o $RUN_DIR/analysis $RUN_DIR 99 --pc 2
+
+
+
+BASE_DIR="../cryofold/cryobench_IgD/IgG-1D/images/snr0.01"
+RUN_DIR=$BASE_DIR/run_new_pair
+
+
+
+python ./flexfold/scripts/flexible_backprojection.py  \
+    --reference $RUN_DIR/reference.pdb\
+     -o $RUN_DIR/backproject_flex/   \
+    --coordinates "$RUN_DIR/coordinates.dcd" \
+    --coefs $RUN_DIR/coefs.pt    \
+    --batch_size 4 --particles $BASE_DIR/sorted_particles.128.txt  --lazy   \
+    --poses  $BASE_DIR/particles.pkl --ctf $BASE_DIR/ctf.pkl  \
+    --wiener_constant 1.0 --sigma 1.0 --gaussian_threshold 0.99 --pixel_size 3.0

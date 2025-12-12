@@ -30,7 +30,7 @@ python ~/flexfold/flexfold/scripts/compute_initial_pose.py $BASE_DIR/initial_pos
 
 
 BASE_DIR=data/cryofold/EMPIAR-10330/
-RUN_DIR=$BASE_DIR/run_target_new
+RUN_DIR=$BASE_DIR/run_target3
 
 python -u ./flexfold/scripts/train_target.py \
     $BASE_DIR/FinalRefinement-OriginalParticles-PfCRT.mrcs  \
@@ -42,10 +42,10 @@ python -u ./flexfold/scripts/train_target.py \
     --pixel_size 1.035 \
     --sigma 1.05\
     --quality_ratio 5.0 \
-    --embedding_path $BASE_DIR/embeddings.pt  \
+    --embedding_path $BASE_DIR/embeddings_masked.pt  \
     --initial_pose_path $BASE_DIR/initial_pose.pt \
     --af_checkpoint_path  ../openfold/openfold/resources/params/params_model_1_multimer_v3.npz \
-    --batch-size 2  \
+    --batch-size 1  \
     --num-workers 0 \
     --zdim 4  \
     \
@@ -57,12 +57,12 @@ python -u ./flexfold/scripts/train_target.py \
     --dec-layers 4 \
     --pair_stack\
     --no_blocks_sm 4\
-    --target_file $BASE_DIR/6UKJ.cif \
+    --target_file $BASE_DIR/target_masked.pdb \
     --overwrite \
     --frozen_angle\
     --multimer \
     --wd 0 \
-    --lr 1e-4 \
+    --lr 5e-5 \
     --chi_loss_weight 0.01\
     --viol_loss_weight 0.01\
     --warmup 100 \
@@ -102,14 +102,22 @@ python -u ./flexfold/scripts/train_target.py \
     --multimer \
     --wd 0 \
     --lr 1e-4 \
-    --chi_loss_weight 1\
-    --viol_loss_weight 1\
+    --chi_loss_weight 0.01\
+    --viol_loss_weight 0.01\
     --warmup 100 \
     --domain_loss fourier \
     --multimer 
 
 
+python ~/flexfold/flexfold/scripts/compute_initial_pose.py $BASE_DIR/initial_pose_new --backproject_path $BASE_DIR/backproject/backproject.mrc\
+  --embedding_pdb_path $BASE_DIR/run_target3/fit.500.pdb  --overwrite
+python ~/flexfold/flexfold/scripts/compute_initial_pose.py $BASE_DIR/initial_pose_new \
+ --from_aligned_pdb  $BASE_DIR/initial_pose_new_adjusted.pdb \
+ --alignment_reference $BASE_DIR/run_target3/fit.500.pdb   \
+  --overwrite
 
+BASE_DIR=data/cryofold/EMPIAR-10330/
+RUN_DIR=$BASE_DIR/run_new
 
 python -u ./flexfold/scripts/train.py \
     $BASE_DIR/particles.star  \
@@ -120,8 +128,8 @@ python -u ./flexfold/scripts/train.py \
     --pixel_size 1.035 \
     --sigma 1.05\
     --quality_ratio 5.0 \
-    --embedding_path $BASE_DIR/embeddings.pt  \
-    --initial_pose_path $BASE_DIR/initial_pose.pt \
+    --embedding_path $BASE_DIR/embeddings_masked.pt  \
+    --initial_pose_path $BASE_DIR/initial_pose_new.pt \
     --af_checkpoint_path  ../openfold/openfold/resources/params/params_model_1_multimer_v3.npz \
     --batch-size 2  \
     --num-workers 0 \
@@ -134,7 +142,6 @@ python -u ./flexfold/scripts/train.py \
     --dec-layers 4 \
     --pair_stack\
     --no_blocks_sm 4\
-    --target_file $BASE_DIR/6UKJ.cif \
     --overwrite \
     --frozen_angle\
     --multimer \
@@ -143,6 +150,7 @@ python -u ./flexfold/scripts/train.py \
     --chi_loss_weight 0.01\
     --viol_loss_weight 0.01\
     --warmup 100 \
-    --domain_loss fourier \
+    --domain_loss real \
     --multimer \
-    --load  $BASE_DIR/run_target/weights.5000.pkl
+      --train_val_ratio 0.995\
+    --load  $BASE_DIR/run_target3/weights.300.pkl

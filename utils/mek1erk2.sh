@@ -179,3 +179,22 @@ cryodrgn train_vae $BASE_DIR/particles_crop.mrcs  \
     --domain hartley \
     --do-pose-sgd \
     --pretrain 1
+
+
+
+
+BASE_DIR="/home/vuillemr/flexfold/data/cryofold/jillsData/particles"
+RUN_DIR=$BASE_DIR/run_pair
+
+python ./flexfold/scripts/flexible_backprojection.py  \
+    --reference $RUN_DIR/reference.pdb\
+     -o $RUN_DIR/backproject_filtered/   \
+    --coordinates "$RUN_DIR/filtered_chunk_*_coordinates.dcd" --indices "$RUN_DIR/filtered_chunk_*_indices.txt" \
+    --chunk \
+    --coefs $RUN_DIR/coefs.pt    \
+    --batch_size 16 --particles $BASE_DIR/particles_crop.mrcs --lazy   \
+    --poses  $BASE_DIR/particles_crop.pkl --ctf $BASE_DIR/ctf_crop.pkl  \
+    --wiener_constant 1.0 --sigma 1.0 --gaussian_threshold 0.9 --pixel_size 0.92
+
+
+python ./flexfold/scripts/flexible_backprojection.py  -o $RUN_DIR/backproject_flex/ --wiener_constant 0.1 --pixel_size 1.58 --volumes $RUN_DIR/backproject_flex

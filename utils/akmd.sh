@@ -196,12 +196,28 @@ python ./flexfold/scripts/drgnai_assert.py -i $RUN_DIR/out -o $RUN_DIR --gt_pdbs
 
 ##############
 
-python ./flexfold/scripts/wrapped_backprojection.py \
- -i /home/vuillemr/flexfold/data/cryofold/AKMD/snr1/run/ -o /home/vuillemr/flexfold/data/cryofold/AKMD/snr1/backproject_test\
- --batch_size 16 --particles /home/vuillemr/flexfold/data/cryofold/AKMD/snr0.005/Particles/particles.mrcs \
-  --poses  /home/vuillemr/flexfold/data/cryofold/AKMD/snr1/particles.pkl --ctf /home/vuillemr/flexfold/data/cryofold/AKMD/snr1/ctf.pkl \
-  --wiener_constant 1.0 --use_warp 
-  
+BASE_DIR="/home/vuillemr/flexfold/data/cryofold/AKMD/snr0.005"
+RUN_DIR=$BASE_DIR/run_conv_pair_sgd_4blocks_lowlr
+
+python ./flexfold/scripts/trajectory_from_model.py $RUN_DIR $RUN_DIR --epoch 99  --batch_size 16 --num_nodes 1 --devices 1
+
+
+python ./flexfold/scripts/flexible_backprojection.py  \
+    --reference $RUN_DIR/reference.pdb\
+     -o $RUN_DIR/backproject_flex   \
+    --coordinates "$RUN_DIR/chunk_*_coordinates.dcd" --indices "$RUN_DIR/chunk_*_indices.txt" \
+    --chunk \
+     --coefs $RUN_DIR/coefs.pt    \
+    --batch_size 4 --particles $BASE_DIR/Particles/particles.mrcs --lazy   \
+    --ctf $BASE_DIR/ctf.pkl  \
+    --wiener_constant 5 --sigma 1.0 --gaussian_threshold 0.99 \
+    --poses $RUN_DIR/checkpoints/epoch=99-step=*.ckpt 
+    #--poses $BASE_DIR/particles.pkl \
+    # --poses $RUN_DIR/particles.pkl
+
+
+
+
 python ./flexfold/scripts/flexible_backprojection.py \
  -i /home/vuillemr/flexfold/data/cryofold/AKMD/snr1/run/ -o /home/vuillemr/flexfold/data/cryofold/AKMD/snr1/backproject_test\
  --batch_size 16 --particles /home/vuillemr/flexfold/data/cryofold/AKMD/snr0.005/Particles/particles.mrcs \
@@ -213,11 +229,10 @@ python ./flexfold/scripts/flexible_backprojection.py \
 
 
 
-BASE_DIR="/home/vuillemr/flexfold/data/cryofold/AKMD/snr1"
 RUN_DIR=$BASE_DIR/run_dynamight
 
-dynamight optimize-deformations  --refinement-star-file $BASE_DIR/particles_006740.star  --output-directory $RUN_DIR --initial-model $BASE_DIR/backproject/backproject.mrc
+conda activate dynamight
 
-dynamight optimize-inverse-deformations $RUN_DIR --checkpoint-file $RUN_DIR/forward_deformations/checkpoints/150.pth
-
-dynamight deformable-backprojection $RUN_DIR  --vae-directory  $RUN_DIR/forward_deformations/checkpoints/150.pth
+dynamight optimize-deformations  --refinement-star-file $BASE_DIR/particles_00*.star  --output-directory $RUN_DIR --initial-model $BASE_DIR/backproject/backproject.mrc
+dynamight optimize-inverse-deformations $RUN_DIR --checkpoint-file $RUN_DIR/forward_deformations/checkpoints/075.pth
+dynamight deformable-backprojection $RUN_DIR  --vae-directory  $RUN_DIR/forward_deformations/checkpoints/075.pth

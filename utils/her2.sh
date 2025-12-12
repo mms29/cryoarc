@@ -30,14 +30,14 @@ cryodrgn backproject_voxel $BASE_DIR/particles.mrcs --poses $BASE_DIR/particles.
 
 
 # Cryodrgn
-RUN_DIR=$BASE_DIR/run_cryodrgn_sgd
-cryodrgn train_vae $BASE_DIR/particles.mrcs  \
-    --poses $BASE_DIR/particles.pkl \
-    --ctf $BASE_DIR/ctf.pkl \
+RUN_DIR=$BASE_DIR/run_cryodrgn_sgd_100K
+cryodrgn train_vae $BASE_DIR/particles_100K.star  \
+    --poses $BASE_DIR/particles_100K.pkl \
+    --ctf $BASE_DIR/ctf_100K.pkl \
     --lazy\
     -n 4 \
     -o $RUN_DIR \
-    --batch-size 96  \
+    --batch-size 32  \
     --num-workers 0 \
     --zdim 4  \
     --enc-dim 256 \
@@ -50,3 +50,41 @@ cryodrgn train_vae $BASE_DIR/particles.mrcs  \
 
 RUN_DIR=$BASE_DIR/run
 python ./flexfold/scripts/analyze.py  -o $RUN_DIR/analysis $RUN_DIR 1 --pc 2 
+
+
+
+
+
+
+
+BASE_DIR="../cryofold/HER2/data"
+RUN_DIR=$BASE_DIR/run
+
+python ./flexfold/scripts/flexible_backprojection.py  \
+    --reference $RUN_DIR/reference.pdb\
+     -o $RUN_DIR/backproject_flex/   \
+    --coordinates "$RUN_DIR/chunk_*_coordinates.dcd" --indices "$RUN_DIR/chunk_*_indices.txt" \
+    --chunk \
+    --coefs $RUN_DIR/coefs.pt    \
+    --batch_size 4 --particles $BASE_DIR/particles_100K.star --lazy   \
+    --poses  $BASE_DIR/particles_100K.pkl --ctf $BASE_DIR/ctf_100K.pkl  \
+    --wiener_constant 10.0 --sigma 1.0 --gaussian_threshold 0.9 --pixel_size 1.16
+
+python ./flexfold/scripts/flexible_backprojection.py  -o $RUN_DIR/backproject_flex/ --wiener_constant 1.0 --pixel_size 1.16 --volumes $RUN_DIR/backproject_flex
+
+
+BASE_DIR="../cryofold/HER2/data"
+RUN_DIR=$BASE_DIR/run2
+
+python ./flexfold/scripts/flexible_backprojection.py  \
+    --reference $RUN_DIR/reference.pdb\
+     -o $RUN_DIR/backproject_flex/   \
+    --coordinates "$RUN_DIR/chunk_*_coordinates.dcd" --indices "$RUN_DIR/chunk_*_indices.txt" \
+    --chunk \
+    --coefs $RUN_DIR/coefs.pt    \
+    --batch_size 4 --particles $BASE_DIR/particles.mrcs --lazy   \
+    --poses  $BASE_DIR/particles.pkl --ctf $BASE_DIR/ctf.pkl  \
+    --wiener_constant 10.0 --sigma 1.0 --gaussian_threshold 0.9 --pixel_size 1.16
+
+
+python ./flexfold/scripts/flexible_backprojection.py  -o $RUN_DIR/backproject_flex/ --wiener_constant 0.1 --pixel_size 1.16 --volumes $RUN_DIR/backproject_flex

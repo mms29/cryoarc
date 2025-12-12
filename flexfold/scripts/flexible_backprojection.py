@@ -26,6 +26,8 @@ from cryodrgn.commands_utils.fsc import calculate_cryosparc_fscs
 import numpy as np
 from torch import fft
 import glob 
+from cryodrgn import lie_tools, utils
+from torch.utils.data import DataLoader
 
 def fft3center(x):
     dim =  (-1,-2,-3)
@@ -280,6 +282,7 @@ def flexible_backprojection(
         batch_size: int = 4, 
         rigid : bool = False, 
         eps : float = 1e-8, 
+        num_workers=4,
         ) :
     """
     
@@ -299,27 +302,39 @@ def flexible_backprojection(
     volume_reg_half1 = torch.zeros(Dr, Dr, Dr, device=device)
     volume_reg_half2 = torch.zeros(Dr, Dr, Dr, device=device)
 
-    soft_mask = make_soft_circular_mask(D, cutoff_radius_frac=0.95, transition_frac=0.05, device=device)
-    # soft_mask = None
+    # soft_mask = make_soft_circular_mask(D, cutoff_radius_frac=0.95, transition_frac=0.05, device=device)
+    soft_mask = None
 
     if not rigid : 
         vox_mask_canon = get_voxel_mask(crd_canon, grid_size, pixel_size,  n_pix_cutoff)
         gaussian_weights = gaussian_kernel_weigths(crd_canon, vox_mask_canon[0],vox_mask_canon[1], coefs, grid_size, pixel_size, sigma)
         gaussian_norm = gaussian_kernel_norm(gaussian_weights, vox_mask_canon[0], grid_size)
 
+        vol_smooth_mask = vol_real_mask(crd_canon, vox_mask_canon[0], vox_mask_canon[1], grid_size, sigma, pixel_size, coef=coefs)
+        vol_smooth_mask/= vol_smooth_mask.max()
+        vol_smooth_inv_mask = 1.0-vol_smooth_mask
 
-    for ii in tqdm.tqdm(range(N// batch_size)):
+    loader = DataLoader(
+        imageDataset,
+        batch_size=batch_size,
+        shuffle=False,   
+        num_workers=num_workers,   
+        pin_memory=True,  
+    )
 
-        # Batching
-        start = ii*batch_size
-        end = min(start + batch_size, N)
-        B = end - start
+
+    for ii, batch in tqdm.tqdm(enumerate(loader), total=len(loader)):
 
         # Get batch particle ctf and pose
-        particles_ft,_, i = imageDataset[start:end]
+        particles_ft,_, idx = batch
         particles_ft=particles_ft.to(device)
 
-        rot, tran = posetracker.get_pose(range(start,end))
+        # Batching
+        start = int(idx[0])
+        end   = int(idx[-1]) + 1
+        B     = len(idx)
+
+        rot, tran = posetracker.get_pose(torch.arange(start,end, device=device))
         c = ctf_from_params(ctf_params[start:end], lattice)
 
         if not args.rigid:
@@ -330,7 +345,6 @@ def flexible_backprojection(
 
         # Apply CTF
         y=particles_ft * c
-
 
         # Phase Shift 
         y = torch.view_as_complex(lattice.translate_ft(torch.view_as_real(y).view(B, D*D, 2), tran.unsqueeze(1)).view(B, D, D, 2))
@@ -357,16 +371,20 @@ def flexible_backprojection(
                 gaussian_norm=gaussian_norm,
                 eps=eps
             )
+
             # filter
-            recon = recon_deformed 
+            vol_recon_smooth_mask = vol_real_mask(crd_traj, vox_mask_recon[0], vox_mask_recon[1], grid_size, sigma, pixel_size, coef=coefs)
+            vol_recon_smooth_mask/= vol_recon_smooth_mask.max()
+            vol_recon_smooth_inv_mask = 1.0-vol_recon_smooth_mask
+            vol_smooth_inv_mask_merged = torch.min(vol_recon_smooth_inv_mask, vol_smooth_inv_mask)
+
+            recon = vol_smooth_mask * recon_deformed + vol_smooth_inv_mask_merged * recon
 
         # sum
         # recon /= N
         recon = torch.sum(recon, dim=0)
 
         # Same for CTF (expand + rotate)
-
-
         if soft_mask is not None:
             c*= soft_mask
         ctf_real = ifft2center(unsymmetrize_ht(c)).real
@@ -385,7 +403,8 @@ def flexible_backprojection(
                 gaussian_norm=gaussian_norm,
                 eps=eps
             )   
-            ctf_recon = ctf_recon_deformed 
+            # ctf_recon = ctf_recon_deformed 
+            ctf_recon = vol_smooth_mask * ctf_recon_deformed + vol_smooth_inv_mask_merged * ctf_recon
         # Warp and rotate
         ctf_recon =  fft3center(ctf_recon)
         ctf_recon = torch.abs(ctf_recon) ** 2
@@ -408,6 +427,7 @@ def flexible_backprojection(
 def regularize_volume(volume, volume_reg, wiener_constant):
 
     volume_ft = fft3center(volume)
+    # volume_ft=torch.conj(volume_ft)
 
     regularized_counts = volume_reg + wiener_constant * volume_reg.mean()
     regularized_counts *= volume_reg.mean() / regularized_counts.mean()
@@ -474,12 +494,20 @@ class FlexibleBackprojection:
         self.lattice = Lattice(self.D, extent=0.5).to(device)
 
         # Poses
-        self.posetracker = PoseTracker.load(poses_file, self.N, self.D, None, ind=self.indices).to(device)
+        if os.path.splitext(poses_file)[1] == ".ckpt":
+            dummy_rot_np = np.zeros((self.indices.shape[0],3,3))
+            dummy_trans_np = np.zeros((self.indices.shape[0],2))
+            self.posetracker = PoseTracker(rots_np=dummy_rot_np, trans_np=dummy_trans_np,D=self.D, emb_type="quat").to(device)
+            weights = torch.load(poses_file, map_location="cpu")["state_dict"]
+            rots_quat =  weights["posetracker.rots"].to(device)[self.indices]
+            self.posetracker.rots_emb.weight.data.copy_(lie_tools.SO3_to_quaternions(rots_quat))
+            self.posetracker.trans_emb.weight.data.copy_(weights["posetracker.trans"].to(device)[self.indices])
+        else:
+            self.posetracker = PoseTracker.load(poses_file, self.N, self.D, None, ind=self.indices).to(device)
 
         # CTF
         self.ctf_params = torch.tensor(ctf.load_ctf_for_training(self.D - 1,ctf_file)).to(device)
         self.ctf_params = self.ctf_params[self.indices]
-
 
         if not self.rigid:
             self.coordinates = torch.tensor(dcd2numpyArr(coordinates_file), device=device)
@@ -501,7 +529,7 @@ class FlexibleBackprojection:
     def run_backproj(self, batch_size, eps):
 
         with torch.no_grad():
-            return flexible_backprojection (
+            return flexible_backprojection(
                     imageDataset=self.imageDataset,
                     lattice=self.lattice, 
                     posetracker=self.posetracker,
@@ -546,55 +574,18 @@ def main(args):
     rigid = args.rigid
     sigma = args.sigma
 
+    reg_volumes_prefix = args.volumes
 
     if not os.path.isdir(output_dir):
         os.makedirs(output_dir)
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    if not rigid:
-        crd_canon = torch.tensor(read_coords(reference_file), device=device, dtype=torch.float32).unsqueeze(0)
-        
-    if not args.chunks:
-        backprojector= FlexibleBackprojection(
-            crd_canon=crd_canon,
-            indices_file=indices_file,
-            particles_file=particles_file,
-            poses_file=poses_file,
-            ctf_file=ctf_file,
-            coordinates_file=coordinates_file,
-            coefs_file=coefs_file,
-            lazy=lazy,
-            rigid=rigid,
-            pixel_size=pixel_size,
-            gaussian_threshold=gaussian_threshold,
-            sigma=sigma,
-        )
+    if reg_volumes_prefix is None:
 
-        (       
-            volume, 
-            volume_half1, 
-            volume_half2,  
-            volume_reg, 
-            volume_reg_half1, 
-            volume_reg_half2
-        
-        ) = backprojector.run_backproj(batch_size=batch_size, eps=eps)
-    else:
-
-        coordinates_files = glob.glob(coordinates_file)
-        indices_files = glob.glob(indices_file)
-        coordinates_files.sort()
-        indices_files.sort()
-        N_chunks = len(coordinates_files)
-
-        print("Running flexbile backprojections for %i chunks"%N_chunks)
-        assert N_chunks == len(indices_files)
-
-        volumes = None
-
-        for (coordinates_file, indices_file) in zip(coordinates_files, indices_files):
-
+        if not rigid:
+            crd_canon = torch.tensor(read_coords(reference_file), device=device, dtype=torch.float32).unsqueeze(0)
+            
+        if not args.chunks:
             backprojector= FlexibleBackprojection(
                 crd_canon=crd_canon,
                 indices_file=indices_file,
@@ -610,55 +601,120 @@ def main(args):
                 sigma=sigma,
             )
 
-            v = backprojector.run_backproj(batch_size=batch_size, eps=eps)
-            volumes = update_chunk_volumes(volumes, v)
+            (       
+                volume, 
+                volume_half1, 
+                volume_half2,  
+                volume_reg, 
+                volume_reg_half1, 
+                volume_reg_half2
+            
+            ) = backprojector.run_backproj(batch_size=batch_size, eps=eps)
+        else:
 
-        (       
-            volume, 
-            volume_half1, 
-            volume_half2,  
-            volume_reg, 
-            volume_reg_half1, 
-            volume_reg_half2
-        
-        ) = volumes
+            coordinates_files = glob.glob(coordinates_file)
+            indices_files = glob.glob(indices_file)
+            coordinates_files.sort()
+            indices_files.sort()
+            N_chunks = len(coordinates_files)
+
+            print("Running flexbile backprojections for %i chunks"%N_chunks)
+            assert N_chunks == len(indices_files)
+
+            volumes = None
+
+            for (coordinates_file, indices_file) in zip(coordinates_files, indices_files):
+
+                backprojector= FlexibleBackprojection(
+                    crd_canon=crd_canon,
+                    indices_file=indices_file,
+                    particles_file=particles_file,
+                    poses_file=poses_file,
+                    ctf_file=ctf_file,
+                    coordinates_file=coordinates_file,
+                    coefs_file=coefs_file,
+                    lazy=lazy,
+                    rigid=rigid,
+                    pixel_size=pixel_size,
+                    gaussian_threshold=gaussian_threshold,
+                    sigma=sigma,
+                )
+
+                v = backprojector.run_backproj(batch_size=batch_size, eps=eps)
+                volumes = update_chunk_volumes(volumes, v)
+
+            (       
+                volume, 
+                volume_half1, 
+                volume_half2,  
+                volume_reg, 
+                volume_reg_half1, 
+                volume_reg_half2
+            
+            ) = volumes
+
+
+        write_mrc(output_dir+"/volume_unreg.mrc",volume, is_vol=True)
+        write_mrc(output_dir+"/volume_unreg_half1.mrc",volume_half1, is_vol=True)
+        write_mrc(output_dir+"/volume_unreg_half2.mrc",volume_half2, is_vol=True)
+        write_mrc(output_dir+"/volume_counts.mrc",volume_reg, is_vol=True)
+        write_mrc(output_dir+"/volume_counts_half1.mrc",volume_reg_half1, is_vol=True)
+        write_mrc(output_dir+"/volume_counts_half2.mrc",volume_reg_half2, is_vol=True)
+
+        pixel_size = backprojector.pixel_size
+
+    else:
+        print("Skipping backprojection, starting regularization from volumes %s ..."%reg_volumes_prefix)
+        volume, _ = parse_mrc(reg_volumes_prefix+"/volume_unreg.mrc")
+        volume_half1, _ = parse_mrc(reg_volumes_prefix+"/volume_unreg_half1.mrc")
+        volume_half2, _ = parse_mrc(reg_volumes_prefix+"/volume_unreg_half2.mrc")
+        volume_reg, _ = parse_mrc(reg_volumes_prefix+"/volume_counts.mrc")
+        volume_reg_half1, _ = parse_mrc(reg_volumes_prefix+"/volume_counts_half1.mrc")
+        volume_reg_half2, _ = parse_mrc(reg_volumes_prefix+"/volume_counts_half2.mrc")
+
+        volume = torch.tensor(volume, device=device)
+        volume_half1 = torch.tensor(volume_half1, device=device)
+        volume_half2 = torch.tensor(volume_half2, device=device)
+        volume_reg = torch.tensor(volume_reg, device=device)
+        volume_reg_half1 = torch.tensor(volume_reg_half1, device=device)
+        volume_reg_half2 = torch.tensor(volume_reg_half2, device=device)
 
     volume = regularize_volume(volume, volume_reg, wiener_constant)
     volume_half1 = regularize_volume(volume_half1, volume_reg_half1, wiener_constant)
     volume_half2 = regularize_volume(volume_half2, volume_reg_half2, wiener_constant)
 
-    write_mrc(output_dir+"/backproject_unfiltred.mrc",volume, is_vol=True)
-    write_mrc(output_dir+"/backproject_unfiltred_half1.mrc",volume_half1, is_vol=True)
-    write_mrc(output_dir+"/backproject_unfiltred_half2.mrc",volume_half2, is_vol=True)
-
-
-    if not rigid:
-        truncation = gaussian_halfwidth_voxels(backprojector.sigma, backprojector.pixel_size, p=backprojector.gaussian_threshold/2) # half truncation 
-        vox_mask_canon = get_voxel_mask(backprojector.crd_canon, backprojector.Dr, backprojector.pixel_size,  truncation)
-        vol_mask = gaussian_kernel_mask(vox_mask_canon[0], backprojector.Dr, device)[-1]
-        binary_vol_mask = vol_mask.clone()
-        binary_vol_mask[binary_vol_mask>eps] = 1.0
-        binary_vol_mask[binary_vol_mask<=eps] = 0.0
-
-        volume *= binary_vol_mask.float()
-        volume_half1 *= binary_vol_mask.float()
-        volume_half2 *= binary_vol_mask.float()
-
-
-        write_mrc(output_dir+"/backproject_masked.mrc",volume, is_vol=True)
-        write_mrc(output_dir+"/backproject_masked_half1.mrc",volume_half1, is_vol=True)
-        write_mrc(output_dir+"/backproject_masked_half2.mrc",volume_half2, is_vol=True)
-        write_mrc(output_dir+"/backproject_mask.mrc",binary_vol_mask.float(), is_vol=True)
-
-    # Output filter to mimic the trilinear voxel interpolation in Fourier backprojection
-    output_filter_sigma = (3**0.5) / (6**0.5) # 3x 1D trilinear blur 1/6**0.5 = 0.7 subvoxel
-    volume = gaussian_filter3d(volume[None, None], 5, output_filter_sigma)[-1,-1]
-    volume_half1 = gaussian_filter3d(volume_half1[None, None], 5, output_filter_sigma)[-1,-1]
-    volume_half2 = gaussian_filter3d(volume_half2[None, None], 5, output_filter_sigma)[-1,-1]
-
     write_mrc(output_dir+"/backproject.mrc",volume, is_vol=True)
     write_mrc(output_dir+"/backproject_half1.mrc",volume_half1, is_vol=True)
-    write_mrc(output_dir+"/backproject_half2.mrc",volume_half2, is_vol=True)        
+    write_mrc(output_dir+"/backproject_half2.mrc",volume_half2, is_vol=True)
+
+
+    # if not rigid:
+    #     truncation = gaussian_halfwidth_voxels(backprojector.sigma, backprojector.pixel_size, p=backprojector.gaussian_threshold*4) # 4*sigma truncation 
+    #     vox_mask_canon = get_voxel_mask(backprojector.crd_canon, backprojector.Dr, backprojector.pixel_size,  truncation)
+    #     vol_mask = gaussian_kernel_mask(vox_mask_canon[0], backprojector.Dr, device)[-1]
+    #     binary_vol_mask = vol_mask.clone()
+    #     binary_vol_mask[binary_vol_mask>eps] = 1.0
+    #     binary_vol_mask[binary_vol_mask<=eps] = 0.0
+
+    #     volume *= binary_vol_mask.float()
+    #     volume_half1 *= binary_vol_mask.float()
+    #     volume_half2 *= binary_vol_mask.float()
+
+
+    #     write_mrc(output_dir+"/backproject_masked.mrc",volume, is_vol=True)
+    #     write_mrc(output_dir+"/backproject_masked_half1.mrc",volume_half1, is_vol=True)
+    #     write_mrc(output_dir+"/backproject_masked_half2.mrc",volume_half2, is_vol=True)
+    #     write_mrc(output_dir+"/backproject_mask.mrc",binary_vol_mask.float(), is_vol=True)
+
+    # # Output filter to mimic the trilinear voxel interpolation in Fourier backprojection
+    # output_filter_sigma = (3**0.5) / (6**0.5) # 3x 1D trilinear blur 1/6**0.5 = 0.7 subvoxel
+    # volume = gaussian_filter3d(volume[None, None], 5, output_filter_sigma)[-1,-1]
+    # volume_half1 = gaussian_filter3d(volume_half1[None, None], 5, output_filter_sigma)[-1,-1]
+    # volume_half2 = gaussian_filter3d(volume_half2[None, None], 5, output_filter_sigma)[-1,-1]
+
+    # write_mrc(output_dir+"/backproject.mrc",volume, is_vol=True)
+    # write_mrc(output_dir+"/backproject_half1.mrc",volume_half1, is_vol=True)
+    # write_mrc(output_dir+"/backproject_half2.mrc",volume_half2, is_vol=True)        
 
     # if not args.rigid:
 
@@ -674,7 +730,7 @@ def main(args):
     #     write_mrc(output_dir+"/backproject_normalized_half2.mrc",volume_half2, is_vol=True)
 
 
-    fsc_curve,freqs = fourier_shell_correlation(volume_half1,volume_half2,None, apix=backprojector.pixel_size)
+    fsc_curve,freqs = fourier_shell_correlation(volume_half1,volume_half2,None, apix=pixel_size)
     res_05, res_0143 = fsc_thresh(fsc_curve,freqs )
 
     fig, ax = plt.subplots(1,1)
@@ -699,7 +755,7 @@ def main(args):
             volume.cpu(),
             volume_half1.cpu(),
             volume_half2.cpu(),
-            apix=backprojector.pixel_size,
+            apix=pixel_size,
             out_file=output_dir+"/fsc_cs.txt",
             plot_file=output_dir+"/fsc_cs.png",
         )
@@ -726,6 +782,10 @@ def add_args(parser: argparse.ArgumentParser):
     parser.add_argument("--poses",type=os.path.abspath,default=None, help="TODO")
     parser.add_argument("--ctf",type=os.path.abspath,default=None, help="TODO")
     parser.add_argument("--eps",type=float,default=1e-6, help="TODO")
+
+
+    parser.add_argument("--volumes",type=os.path.abspath,default=None, help="TODO")
+    
     return parser
 
 

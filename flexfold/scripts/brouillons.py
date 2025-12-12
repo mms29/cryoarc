@@ -480,45 +480,27 @@ import os
 # colors =   [plt.cm.Greens(v) for v in np.linspace(0.7, 0.8, 1) ] + [plt.cm.Reds(v) for v in np.linspace(0.6, 0.8,3) ] + [plt.cm.Blues(v) for v in np.linspace(0.5, 0.8, len(methods_ff)) ]
 
 base_dirs=[
-"/home/vuillemr/flexfold/data/cryofold/AKMD/snr1",
-"/home/vuillemr/flexfold/data/cryofold/AKMD/snr0.1",
 "/home/vuillemr/flexfold/data/cryofold/AKMD/snr0.01",
 "/home/vuillemr/flexfold/data/cryofold/AKMD/snr0.005",
-"/home/vuillemr/flexfold/data/cryofold/AKMD/snr0.001"]
+"/home/vuillemr/flexfold/data/cryofold/AKMD/snr0.001"
+]
 
-noise_levels = [0,-1,-2,-2.5,-3]
+noise_levels = [-2,-2.5,-3]
 
 methods=["avg",
-         "run_cryodrgn", "run_cryodrgn_sgd", 
+         "run_cryodrgn_sgd", 
          "run_drgnai",
-         "run_table_pair","run_table_pair_sgd", "run_conv_sgd"]
+         "run_conv_sgd"]
 names=["Homogeneous",
-       "CryoDRGN", "CryoDRGN-Pose", 
+       "CryoDRGN", 
        "DRGN-AI",
-       "run_table_pair", "run_table_pair_sgd", "run_conv_sgd"
+       "Ours"
        ]
-prefix = "/home/vuillemr/flexfold/data/cryofold/AKMD/table"
+prefix = "/home/vuillemr/flexfold/data/cryofold/AKMD/figure_"
 methods_ff =[ m for m in names if not ("DRGN" in m or "Homogeneous" in m) ]
 
-colors =   [plt.cm.Greens(v) for v in np.linspace(0.7, 0.8, 1) ] + [plt.cm.Reds(v) for v in np.linspace(0.6, 0.8,3) ] + [plt.cm.Blues(v) for v in np.linspace(0.5, 0.8, len(methods_ff)) ]
+colors =   [plt.cm.Greens(v) for v in np.linspace(0.7, 0.8, 1) ] + [plt.cm.Reds(v) for v in np.linspace(0.6, 0.8,2) ] + [plt.cm.Blues(v) for v in np.linspace(0.5, 0.8, len(methods_ff)) ]
 
-
-
-# base_dirs=[
-# # "/home/vuillemr/flexfold/data/cryofold/AKMD/snr1",
-# "/home/vuillemr/flexfold/data/cryofold/AKMD/snr0.1",
-# "/home/vuillemr/flexfold/data/cryofold/AKMD/snr0.01",
-# "/home/vuillemr/flexfold/data/cryofold/AKMD/snr0.005",
-# "/home/vuillemr/flexfold/data/cryofold/AKMD/snr0.001"]
-
-# noise_levels = [-1, -2,-2.5,-3]
-
-# methods=["avg","run_cryodrgn_sgd","run_drgnai","run_conv_sgd"]
-# names=["Homogeneous","CryoDRGN","DRGN-AI","Ours"]
-# prefix = "/home/vuillemr/flexfold/data/cryofold/AKMD/essential_"
-
-
-# colors = ["tab:green", "tab:orange", "tab:red", "tab:blue"]
 
 
 ##################### 
@@ -530,6 +512,8 @@ for i, (basedir, noise) in enumerate(zip(base_dirs, noise_levels)):
     for j, m in enumerate(methods):
         if "drgnai" in m:
             filename = basedir + "/" + m + "/out/conf.99.pkl"
+        elif "avg" in m:
+            filename="/home/vuillemr/flexfold/data/cryofold/AKMD/pdbs/pca.pkl"
         else:
             filename = basedir + "/" + m + "/z.99.pkl"
         if not os.path.isfile(filename):
@@ -547,18 +531,32 @@ data=data_pca
 nrows = len(base_dirs)
 ncols = len(methods)
 cmap = "plasma"
-c = np.repeat(np.arange(100), 100)
-fig, ax = plt.subplots(nrows, (ncols-1), figsize=((ncols-1)*4, nrows*3), layout="constrained")  
+fig, ax = plt.subplots(nrows, ncols, figsize=(ncols*4, nrows*3), layout="constrained")  
 for i, (basedir, noise) in enumerate(zip(base_dirs, noise_levels)):
-    for j, (m,n) in enumerate(zip(methods[1:], names[1:])):
-        ind = ncols*i + j+1
+    for j, (m,n) in enumerate(zip(methods, names)):
+        ind = ncols*i + j
+
         if data[ind] is not None:
-            ax[i,j].scatter(data[ind][:,0],data[ind][:,1], c=c, cmap=cmap, s=2.0, alpha=0.5)
-            ax[i,j].set_title(f"{n} - $SNR=10^{{{noise:g}}}$")
+            c = np.repeat(np.arange(100), data[ind].shape[0]//100)
+            if data[ind].shape[0] == 100:
+                s=20.0
+                alpha = 1.0
+                n="GT"
+                pad = 2
+                ax[i,j].set_xlim(data[ind][:,0].min()-pad, data[ind][:,0].max()+pad)
+                ax[i,j].set_ylim(data[ind][:,1].min()-pad, data[ind][:,1].max()+pad)
+            else:
+                s = 10.0
+                alpha=0.2
+
+            ax[i,j].scatter(data[ind][:,0],data[ind][:,1], c=c, cmap=cmap, s=s, alpha=alpha)
+            ax[i,j].set_title(f"{n} - $SNR=10^{{{noise:g}}}$", fontsize=14)
+            ax[i,j].set_xlabel("PC1 ($\AA$)")
+            ax[i,j].set_ylabel("PC2 ($\AA$)")
         else:
             print("missing %s "%n)
 
-fig.savefig(prefix+"summary_pca.png", dpi=150)
+fig.savefig(prefix+"summary_pca.png", dpi=300)
 
 
 # data_umap = []
@@ -598,7 +596,7 @@ def fraction_formatter(x, pos):
 
 methods_ff =[ m for m in names if not ("CryoDRGN" in m or "Homogeneous" in m) ]
 
-fig, ax = plt.subplots(1, len(noise_levels), figsize=(len(noise_levels)*4,5), layout="constrained")
+fig, ax = plt.subplots(1, len(noise_levels), figsize=(len(noise_levels)*3.5,2.5), layout="constrained")
 for i, (basedir, noise) in enumerate(zip(base_dirs, noise_levels)):
     for j, (m,n) in enumerate(zip(methods, names)):
         if "cryodrgn" in m :
@@ -621,7 +619,7 @@ for i, (basedir, noise) in enumerate(zip(base_dirs, noise_levels)):
     ax[i].set_ylim(0,1.05)
     ax[i].axhline(0.143, ls="--", color="grey", alpha=0.5)
     ax[i].legend(loc="upper right")
-fig.savefig(prefix+"summary_fsc.png", dpi=300)
+fig.savefig(prefix+"summary_fsc.svg", dpi=300)
 
 
 fscauc = [[] for i in noise_levels]
@@ -1227,6 +1225,8 @@ from sklearn.decomposition import PCA
 import os 
 import pickle
 
+from flexfold.core import dcd2numpyArr, numpyArr2dcd
+
 prefix = "/home/vuillemr/flexfold/data/cryofold/jillsData/particles/run_pair"
 filename = prefix+ "/z.9.pkl"
 with open(filename, "rb") as f:
@@ -1236,8 +1236,9 @@ with open(filename, "rb") as f:
 # data_umap.append(dimred.fit_transform(z)[:,:2])
 dimred = PCA(n_components=2)
 data_pca = dimred.fit_transform(z_mu)[:,:2]
-data_pca_var = np.linalg.norm(z_logvar, axis=-1) < 10.8
-
+thresh = 10.8
+mean_log_var = np.linalg.norm(z_logvar, axis=-1) 
+data_pca_var = mean_log_var<thresh
 
 cmap = "jet"
 
@@ -1260,7 +1261,27 @@ with open(prefix+ "/z.999.pkl", "wb") as f:
     z_mu = pickle.dump(f, z_mu[data_pca_var])
     z_logvar = pickle.dump(f)
 
+import glob
+dcd_files = glob.glob("/home/vuillemr/flexfold/data/cryofold/jillsData/particles/run_pair/chunk_*dcd")
+idx_files = glob.glob("/home/vuillemr/flexfold/data/cryofold/jillsData/particles/run_pair/chunk_*txt")
+out_prefix = "/home/vuillemr/flexfold/data/cryofold/jillsData/particles/run_pair/filtered_"
+dcd_files.sort()
+idx_files.sort()
 
+for i, (idx_file,dcd_file) in enumerate(zip(idx_files, dcd_files)):
+    print(idx_file)
+    idx = np.loadtxt(idx_file).astype(int)
+    dcd = dcd2numpyArr(dcd_file)
+    filter_idx = mean_log_var[idx]< thresh
+
+    np.savetxt(
+        out_prefix+"chunk_%i_indices.txt"%i,
+        idx[filter_idx]
+    )
+    numpyArr2dcd(
+        dcd[filter_idx],
+        out_prefix+"chunk_%i_coordinates.dcd"%i,
+    )
 
 
 
@@ -1328,3 +1349,189 @@ output_single_pdb(
     residue_index=struct["residue_index"].cpu().detach().numpy(), 
     b_factors=None
 )
+
+
+
+
+
+
+
+
+
+
+
+
+
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+from cryodrgn.utils import load_pkl, save_pkl
+from umap import UMAP
+from sklearn.decomposition import PCA
+import os 
+import pickle
+import numpy as np
+import glob
+from Bio.SVDSuperimposer import SVDSuperimposer
+from Bio.PDB import PDBParser, Superimposer, is_aa
+from Bio.PDB import PDBIO
+
+def get_coordinates(structure):
+    coordinates = []
+    for model in structure:
+        for chain in model:
+            for residue in chain:
+                for atom in residue:
+                    coordinates.append(atom.coord)
+    return np.array(coordinates)
+
+def set_coordinates(structure, coordinates):
+    i=0
+    for model in structure:
+        for chain in model:
+            for residue in chain:
+                for atom in residue:
+                   atom.set_coord(coordinates[i])
+                   i+=1
+    return structure
+prefix = "/home/vuillemr/flexfold/data/cryofold/AKMD/pdbs"
+files = glob.glob(prefix+"/*.pdb")
+files.sort()
+parser = PDBParser(QUIET=True)
+
+coordinates=[]
+for f in files:
+    print(f)
+    structure = parser.get_structure("", f)
+    coordinates.append(get_coordinates(structure))
+
+coordinates = np.array(coordinates)
+
+dimred = PCA(n_components=2)
+data_pca = dimred.fit_transform(coordinates.reshape((100,-1)))
+data_pca /= coordinates.shape[1]**0.5
+
+start, end = np.percentile(data_pca[:, 0], (5, 95))
+num_points=10
+traj = np.linspace(start, end, num_points)
+
+cmap = "jet"
+fig, ax = plt.subplots(1,1, figsize=(15,15), layout="constrained")  
+ax.scatter(data_pca[:,0],data_pca[:,1], c=np.arange(100), cmap=cmap, s=100, alpha=0.5)
+ax.plot(traj,np.zeros(num_points), "--o", c="black")
+fig.savefig(prefix+"/summary_pca.png", dpi=300)
+
+
+with open("/home/vuillemr/flexfold/data/cryofold/AKMD/pdbs/pca.pkl", "wb") as f:
+    import pickle
+    pickle.dump(data_pca,f)
+
+traj_coordinates = dimred.inverse_transform(np.stack((traj, np.zeros(num_points))).T).reshape(num_points,-1,3)
+traj_coordinates -=  traj_coordinates.mean(axis=(0,1))
+io = PDBIO()
+for i in range(num_points):
+    structure = set_coordinates(structure, traj_coordinates[i])
+    io.set_structure(structure)
+    io.save(prefix+"/pc1/%s.pdb"%str(i+1).zfill(3))
+
+
+import torch
+
+weights = torch.load("/home/vuillemr/flexfold/data/cryofold/AKMD/snr0.005/run_conv_sgd/checkpoints/epoch=99-step=7605.ckpt")
+
+
+
+from flexfold.scripts.rln2xmp import read_star_multi, write_star_from_dicts, print_summary
+
+
+star = read_star_multi("data/cryofold/AKMD/snr0.005/particles_009356.star")
+print_summary(star)
+
+N = len(next(iter(star["data_particles"].values())))
+star["data_particles"]["_rlnRandomSubset"] = [1 if i%2 ==0 else 2 for i in range(N)]
+
+write_star_from_dicts(star, "data/cryofold/AKMD/snr0.005/particles_half_maps.star")
+
+
+
+
+
+
+
+############################################################################################
+# empiar 10330
+
+
+import torch
+from flexfold.models import get_target_feats
+from flexfold.models import mmcif_feats_from_file, map_sequences
+import torch 
+import openfold.np.residue_constants as rc
+import itertools
+import numpy as np
+from flexfold.core import struct_to_pdb
+
+
+from openfold.utils.tensor_utils import tensor_tree_map
+
+embeddings = torch.load("data/cryofold/EMPIAR-10330/embeddings.pt",map_location="cpu")
+
+def struct_to_seqs(struct):
+    return {j.item():"".join([rc.restypes_with_x[i]   for i in struct["aatype"][struct["asym_id"] == j]]) for j in torch.unique(struct["asym_id"])}
+
+embeddings = torch.load("data/cryofold/EMPIAR-10330/embeddings.pt", map_location="cpu")
+
+
+
+
+embeddings["residue_index"]
+
+target_feats = get_target_feats("data/cryofold/EMPIAR-10330/6uKJ_fixed.pdb", embeddings)
+target_feats["asym_id"] = torch.tensor(target_feats["asym_id"])
+target_feats["final_atom_positions"] = target_feats["all_atom_positions"]
+target_feats["final_atom_mask"] = target_feats["all_atom_mask"]
+
+
+
+struct_to_pdb(tensor_tree_map(lambda x: x.detach().cpu().numpy(), embeddings), "data/cryofold/EMPIAR-10330/embeddings.pdb")
+struct_to_pdb(tensor_tree_map(lambda x: x.detach().cpu().numpy(), target_feats), "data/cryofold/EMPIAR-10330/target.pdb")
+
+embeddings_seqs = struct_to_seqs(embeddings)
+struct_to_seqs(target_feats)
+
+
+indices = embeddings["asym_id"]!=3
+indices = indices | ((embeddings["residue_index"] >= 49 ) &  (embeddings["residue_index"] <= 407) & (embeddings["asym_id"]==3))
+
+embeddings["final_atom_mask"] = embeddings["final_atom_mask"]* indices.unsqueeze(-1)
+embeddings["seq_mask"] = embeddings["seq_mask"] *indices
+
+
+crop = indices
+
+embeddings_new = {
+    "aatype": embeddings["aatype"][crop],
+    "seq_mask": embeddings["seq_mask"][crop],
+    "pair": embeddings["pair"][crop, :, :][:, crop, :],
+    "single":  embeddings["single"][crop, :],
+    "final_atom_mask": (embeddings["final_atom_mask"])[crop, :],
+    "final_atom_positions":embeddings["final_atom_positions"][crop, :,:],
+    "residx_atom37_to_atom14":embeddings["residx_atom37_to_atom14"][crop, :],
+    "residx_atom14_to_atom37":embeddings["residx_atom14_to_atom37"][crop, :],
+    "atom37_atom_exists":embeddings["atom37_atom_exists"][crop, :],
+    "atom14_atom_exists":embeddings["atom14_atom_exists"][crop, :],
+    "residue_index": embeddings["residue_index"][crop],
+    "asym_id":  embeddings["asym_id"][crop],
+}
+
+target_feats_new = {
+    "aatype": target_feats["aatype"][crop],
+    "final_atom_mask": (target_feats["final_atom_mask"])[crop, :],
+    "final_atom_positions":target_feats["final_atom_positions"][crop, :,:],
+    "residue_index": target_feats["residue_index"][crop],
+    "asym_id":  target_feats["asym_id"][crop],
+}
+
+torch.save(embeddings_new, "data/cryofold/EMPIAR-10330/embeddings_masked.pt")
+struct_to_pdb(tensor_tree_map(lambda x: x.detach().cpu().numpy(), embeddings_new), "data/cryofold/EMPIAR-10330/embeddings_masked.pdb")
+
