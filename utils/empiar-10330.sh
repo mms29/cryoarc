@@ -30,7 +30,7 @@ python ~/flexfold/flexfold/scripts/compute_initial_pose.py $BASE_DIR/initial_pos
 
 
 BASE_DIR=data/cryofold/EMPIAR-10330/
-RUN_DIR=$BASE_DIR/run_target3
+RUN_DIR=$BASE_DIR/run_target3_8
 
 python -u ./flexfold/scripts/train_target.py \
     $BASE_DIR/FinalRefinement-OriginalParticles-PfCRT.mrcs  \
@@ -47,7 +47,7 @@ python -u ./flexfold/scripts/train_target.py \
     --af_checkpoint_path  ../openfold/openfold/resources/params/params_model_1_multimer_v3.npz \
     --batch-size 1  \
     --num-workers 0 \
-    --zdim 4  \
+    --zdim 8  \
     \
     --domain real \
     --encode-mode conv \
@@ -113,7 +113,7 @@ python ~/flexfold/flexfold/scripts/compute_initial_pose.py $BASE_DIR/initial_pos
   --embedding_pdb_path $BASE_DIR/run_target3/fit.500.pdb  --overwrite
 python ~/flexfold/flexfold/scripts/compute_initial_pose.py $BASE_DIR/initial_pose_new \
  --from_aligned_pdb  $BASE_DIR/initial_pose_new_adjusted.pdb \
- --alignment_reference $BASE_DIR/run_target3/fit.500.pdb   \
+ --alignment_reference $BASE_DIR/run_target3/fit.300.pdb   \
   --overwrite
 
 BASE_DIR=data/cryofold/EMPIAR-10330/

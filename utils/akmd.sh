@@ -236,3 +236,55 @@ conda activate dynamight
 dynamight optimize-deformations  --refinement-star-file $BASE_DIR/particles_00*.star  --output-directory $RUN_DIR --initial-model $BASE_DIR/backproject/backproject.mrc
 dynamight optimize-inverse-deformations $RUN_DIR --checkpoint-file $RUN_DIR/forward_deformations/checkpoints/075.pth
 dynamight deformable-backprojection $RUN_DIR  --vae-directory  $RUN_DIR/forward_deformations/checkpoints/075.pth
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+########
+
+
+4AKE	Escherichia coli	Bacteria (Proteobacteria)
+2RH5	Aquifex aeolicus	Bacteria (Aquificae)
+3CM0	Thermus thermophilus	Bacteria (Deinococcus–Thermus)
+1P3J	Bacillus subtilis	Bacteria (Firmicutes)
+1P4S	Mycobacterium tuberculosis	Bacteria (Actinobacteria)
+4K46	Photobacterium profundum	Bacteria (Proteobacteria)
+1KI9	Methanococcus thermolithotrophicus	Archaea (Euryarchaeota)
+1AKY	Saccharomyces cerevisiae	Eukaryota (Fungi)
+5X6K	Notothenia coriiceps	Eukaryota (Vertebrate)
+
+
+python flexfold/scripts/create_embeddings.py 2rh5_A data/cryofold/embeddings/
+python flexfold/scripts/create_embeddings.py 3cm0_A data/cryofold/embeddings/
+python flexfold/scripts/create_embeddings.py 1p3j_A data/cryofold/embeddings/
+python flexfold/scripts/create_embeddings.py 1p4s_A data/cryofold/embeddings/
+python flexfold/scripts/create_embeddings.py 4k46_A data/cryofold/embeddings/
+python flexfold/scripts/create_embeddings.py 1ki9_A data/cryofold/embeddings/
+python flexfold/scripts/create_embeddings.py 1aky_A data/cryofold/embeddings/
+python flexfold/scripts/create_embeddings.py 5x6k_A data/cryofold/embeddings/
+
+chimerax 4ake_A_embeddings.pdb 2rh5_A_embeddings.pdb 3cm0_A_embeddings.pdb 1p3j_A_embeddings.pdb 1p4s_A_embeddings.pdb  4k46_A_embeddings.pdb 1ki9_A_embeddings.pdb 1aky_A_embeddings.pdb 5x6k_A_embeddings.pdb
+
+
+BASE_DIR="/home/vuillemr/flexfold/data/cryofold/AKMD/"
+for pdbid in 4ake 2rh5 3cm0 1p3j 1p4s 4k46 1ki9 1aky 5x6k; do
+    python ~/flexfold/flexfold/scripts/compute_initial_pose.py $BASE_DIR/initial_pose_$pdbid --backproject_path $BASE_DIR/snr1/backproject/backproject.mrc\
+    --embedding_pdb_path $BASE_DIR/../embeddings/"$pdbid"_A_embeddings.pdb  --overwrite
+done
+
+BASE_DIR="/home/vuillemr/flexfold/data/cryofold/AKMD/"
+
+python ./scripts/assert.py -i $RUN_DIR -o $RUN_DIR --gt_pdbs "$BASE_DIR/../pdbs/*pdb" --gt_vols "$BASE_DIR/../vols128/*mrc" --epoch 99 --drgn --skip 50

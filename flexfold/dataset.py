@@ -1,17 +1,19 @@
-"""Classes for using particle image datasets in PyTorch learning methods.
+# -----------------------------------------------------------------------------
+# This file is derived from code in the cryoDRGN project:
+#     https://github.com/zhonge/cryodrgn
+#
+# Original authors: cryoDRGN contributors
+# License: GNU General Public License v3.0 (GPL-3.0)
+#
+# Modifications:
+#   - Adapted and extended for CryoARC
+#   - Modifications by Rémi Vuillemot, 2025
+#
+# This file remains subject to the GPL-3.0 license.
+# See the LICENSE file in the original repository for details.
+# -----------------------------------------------------------------------------
 
-This module contains classes that implement various preprocessing and data access
-methods acting on the image data stored in a cryodrgn.source.ImageSource class.
-These methods are used by learning methods such as those used in volume reconstruction
-algorithms; the classes are thus implemented as children of torch.utils.data.Dataset
-to allow them to inherit behaviour such as batch training.
 
-For example, during initialization, ImageDataset initializes an ImageSource class and
-then also estimates normalization parameters, a non-trivial computational step. When
-image data is retrieved during model training using __getitem__, the data is whitened
-using these parameters.
-
-"""
 import numpy as np
 from collections import Counter, OrderedDict
 

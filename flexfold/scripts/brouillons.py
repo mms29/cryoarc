@@ -1535,3 +1535,65 @@ target_feats_new = {
 torch.save(embeddings_new, "data/cryofold/EMPIAR-10330/embeddings_masked.pt")
 struct_to_pdb(tensor_tree_map(lambda x: x.detach().cpu().numpy(), embeddings_new), "data/cryofold/EMPIAR-10330/embeddings_masked.pdb")
 
+
+
+###################################################################################################
+for f in run2/analysis/z1/vol*pdb; do
+  dir=${f%/*}
+  base=${f##*/}
+  { head -n 229 ss.pdb; cat "$f"; } > "$dir/new_$base"
+done
+
+
+for f in run2/analysis/z2/vol*pdb; do
+  dir=${f%/*}
+  base=${f##*/}
+  { head -n 229 ss.pdb; cat "$f"; } > "$dir/new_$base"
+done
+
+
+for f in run2/analysis/z3/vol*pdb; do
+  dir=${f%/*}
+  base=${f##*/}
+  { head -n 229 ss.pdb; cat "$f"; } > "$dir/new_$base"
+done
+
+for f in run2/analysis/z4/vol*pdb; do
+  dir=${f%/*}
+  base=${f##*/}
+  { head -n 229 ss.pdb; cat "$f"; } > "$dir/new_$base"
+done
+
+
+for f in run_new/analysis/z1/vol*pdb; do
+  dir=${f%/*}
+  base=${f##*/}
+  { head -n 137 ss.pdb; cat "$f"; } > "$dir/new_$base"
+done
+
+for f in run_new/analysis/z2/vol*pdb; do
+  dir=${f%/*}
+  base=${f##*/}
+  { head -n 137 ss.pdb; cat "$f"; } > "$dir/new_$base"
+done
+
+
+for f in run_new/analysis/z3/vol*pdb; do
+  dir=${f%/*}
+  base=${f##*/}
+  { head -n 137 ss.pdb; cat "$f"; } > "$dir/new_$base"
+done
+
+
+for f in run_new/analysis/z4/vol*pdb; do
+  dir=${f%/*}
+  base=${f##*/}
+  { head -n 137 ss.pdb; cat "$f"; } > "$dir/new_$base"
+done
+
+
+for f in run_new/reference.pdb; do
+  dir=${f%/*}
+  base=${f##*/}
+  { head -n 137 ss.pdb; cat "$f"; } > "$dir/new_$base"
+done

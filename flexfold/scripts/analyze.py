@@ -29,6 +29,8 @@ from flexfold import analysis
 from flexfold.core import plot_loss
 logger = logging.getLogger(__name__)
 
+import pickle
+
 
 def add_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
@@ -177,7 +179,7 @@ def backproject_closest(closest, outdir, particles, poses, ctf, no_fsc):
 
 def analyze_zN(
     z, outdir, vg, workdir, epoch, skip_umap=False, num_pcs=2, num_ksamples=20, size= 1.0, alpha=0.1, dpi=300, 
-    backproject_args=None,
+    backproject_args=None,z_logvar=None,
 ):
     zdim = z.shape[1]
 
@@ -194,6 +196,60 @@ def analyze_zN(
     logger.info("Performing principal component analysis...")
     pc, pca = analysis.run_pca(z)
     logger.info("Generating volumes...")
+
+    percentile = 5
+    for i in range(z.shape[1]):
+        start, end = np.percentile(z[:, i], (percentile, 100.0-percentile))
+        zz = np.ones((10,z.shape[1])) * z.mean(axis=0)[None, :]
+        zz[:, i] = np.linspace(start, end, 10)
+        vg.gen_volumes(f"{outdir}/z{i+1}", zz)
+
+
+        ax1 = 0 
+        ax2 = i if i >0 else 1 
+        var = np.linalg.norm(z_logvar, axis=-1)
+        var -= var.min()
+        var /=var.max()
+
+        plt.figure(figsize=(5, 4))
+        sc = plt.scatter(
+            z[:, ax1], z[:, ax2], alpha=alpha, s=size, rasterized=False, c=var, cmap="viridis"
+        )
+        # plt.plot(zz[:, ax1], zz[:, ax2], "-", c="k")
+        plt.scatter(
+            zz[:, ax1],
+            zz[:, ax2],
+            c="cornflowerblue",
+            edgecolor="black",
+        )
+        plt.xlabel("Z%i"%(ax1+1))
+        plt.ylabel("Z%i"%(ax2+1))
+        plt.axis('equal')
+        cbar = plt.colorbar(sc)
+        cbar.set_label("$\| \sigma_z \|$")
+        plt.tight_layout()
+        plt.savefig(f"{outdir}/z{i+1}/traversal_logvar.png", dpi=dpi)
+        plt.close()
+
+
+        plt.figure(figsize=(5, 4))
+        sc = plt.scatter(
+            z[:, ax1], z[:, ax2], alpha=alpha, s=size, rasterized=False, c="cornflowerblue"
+        )
+        # plt.plot(zz[:, ax1], zz[:, ax2], "-", c="k")
+        plt.scatter(
+            zz[:, ax1],
+            zz[:, ax2],
+            c="cornflowerblue",
+            edgecolor="black",
+        )
+        plt.xlabel("Z%i"%(ax1+1))
+        plt.ylabel("Z%i"%(ax2+1))
+        plt.axis('equal')
+        plt.tight_layout()
+        plt.savefig(f"{outdir}/z{i+1}/traversal.png", dpi=dpi)
+        plt.close()
+
 
     for i in range(num_pcs):
         start, end = np.percentile(pc[:, i], (5, 95))
@@ -573,7 +629,9 @@ def main(args: argparse.Namespace) -> None:
 
     plot_loss(f"{workdir}/metrics.csv", f"{outdir}/losses.svg")
 
-    z = utils.load_pkl(zfile)
+    with open(zfile, "rb") as f:
+        z = pickle.load(f)
+        z_logvar = pickle.load(f)
     zdim = z.shape[1]
 
     vol_args = dict(
@@ -616,7 +674,8 @@ def main(args: argparse.Namespace) -> None:
             num_ksamples=args.ksample,
             alpha=args.alpha,
             size=args.size,
-            backproject_args=backproject_args
+            backproject_args=backproject_args,
+            z_logvar=z_logvar
         )
 
     # create demonstration Jupyter notebooks from templates if they don't already exist

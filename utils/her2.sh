@@ -35,7 +35,7 @@ cryodrgn train_vae $BASE_DIR/particles_100K.star  \
     --poses $BASE_DIR/particles_100K.pkl \
     --ctf $BASE_DIR/ctf_100K.pkl \
     --lazy\
-    -n 4 \
+    -n 100 \
     -o $RUN_DIR \
     --batch-size 32  \
     --num-workers 0 \
@@ -46,10 +46,10 @@ cryodrgn train_vae $BASE_DIR/particles_100K.star  \
     --dec-layers 3 \
     --domain hartley \
     --do-pose-sgd \
-    --pretrain 2
+    --pretrain 10
 
 RUN_DIR=$BASE_DIR/run
-python ./flexfold/scripts/analyze.py  -o $RUN_DIR/analysis $RUN_DIR 1 --pc 2 
+python ./flexfold/scripts/analyze.py  -o $RUN_DIR/analysis $RUN_DIR 2 --pc 2 
 
 
 

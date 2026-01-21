@@ -233,12 +233,10 @@ def map_to_canonical(
 
 
 def gaussian_kernel_norm(gaussian_weigths, vox_loc_canonical, grid_size):
-    _, N_atoms, P, _ = vox_loc_canonical.shape
-    flat_idx_canonical = flat_idx(vox_loc_canonical.view(1, -1, 3).long(),  grid_size)   # (1, N_atoms*P)
-    flat_idx_canonical = flat_idx_canonical.expand(1, N_atoms*P)
-
-    norm      =  torch.zeros(1, grid_size **3, device=vox_loc_canonical.device)
-    norm= norm.scatter_add(1, flat_idx_canonical, gaussian_weigths.view(1,-1))
+    B, N_atoms, P, _ = vox_loc_canonical.shape
+    flat_idx_canonical = flat_idx(vox_loc_canonical.view(B, -1, 3).long(),  grid_size)   # (1, N_atoms*P)
+    norm      =  torch.zeros(B, grid_size **3, device=vox_loc_canonical.device)
+    norm= norm.scatter_add(1, flat_idx_canonical, gaussian_weigths.view(1,-1).expand(B,-1))
     return norm
 
 def gaussian_kernel_weigths(crd, vox_loc,vox_mask, coef, grid_size, pixel_size, sigma):
@@ -371,14 +369,35 @@ def flexible_backprojection(
                 gaussian_norm=gaussian_norm,
                 eps=eps
             )
+            gaussian_norm_recon = gaussian_kernel_norm(gaussian_weights, vox_mask_recon[0], grid_size)
+
+            recon_invdeformed = map_to_canonical(
+                vol_target=recon, 
+                vox_loc_target =vox_mask_recon[0], 
+                vox_loc_canonical = vox_mask_canon[0], 
+                gaussian_weights=gaussian_weights,
+                gaussian_norm=gaussian_norm_recon,
+                eps=eps,
+                inverse=True
+            )
 
             # filter
             vol_recon_smooth_mask = vol_real_mask(crd_traj, vox_mask_recon[0], vox_mask_recon[1], grid_size, sigma, pixel_size, coef=coefs)
             vol_recon_smooth_mask/= vol_recon_smooth_mask.max()
             vol_recon_smooth_inv_mask = 1.0-vol_recon_smooth_mask
             vol_smooth_inv_mask_merged = torch.min(vol_recon_smooth_inv_mask, vol_smooth_inv_mask)
+            vol_smooth_inv_mask_intersect = (vol_recon_smooth_mask * vol_smooth_inv_mask)
 
-            recon = vol_smooth_mask * recon_deformed + vol_smooth_inv_mask_merged * recon
+            # print(torch.sum(vol_smooth_inv_mask_intersect[0]))
+            # print(torch.sum(vol_recon_smooth_inv_mask[0]))
+            # print(torch.sum(vol_smooth_inv_mask[0]))
+            # print(torch.sum(vol_smooth_inv_mask_merged[0]))
+
+            # print(torch.norm(recon[0]))
+            # print(torch.norm(recon_invdeformed[0]))
+            # raise
+
+            recon = ( recon_deformed*vol_smooth_mask )+ (vol_smooth_inv_mask_merged * recon) + (vol_smooth_inv_mask_intersect*recon_invdeformed)
 
         # sum
         # recon /= N
@@ -403,8 +422,17 @@ def flexible_backprojection(
                 gaussian_norm=gaussian_norm,
                 eps=eps
             )   
+            ctf_recon_invdeformed = map_to_canonical(
+                vol_target=ctf_recon, 
+                vox_loc_target =vox_mask_recon[0], 
+                vox_loc_canonical = vox_mask_canon[0], 
+                gaussian_weights=gaussian_weights,
+                gaussian_norm=gaussian_norm_recon,
+                eps=eps,
+                inverse=True
+            )   
             # ctf_recon = ctf_recon_deformed 
-            ctf_recon = vol_smooth_mask * ctf_recon_deformed + vol_smooth_inv_mask_merged * ctf_recon
+            ctf_recon = ( ctf_recon_deformed*vol_smooth_mask )+ (vol_smooth_inv_mask_merged * ctf_recon)+ (vol_smooth_inv_mask_intersect*ctf_recon_invdeformed)
         # Warp and rotate
         ctf_recon =  fft3center(ctf_recon)
         ctf_recon = torch.abs(ctf_recon) ** 2

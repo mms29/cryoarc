@@ -838,25 +838,30 @@ plt.rcParams.update({
 "data/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run_new_pair/weights.14.pkl"
 zfile = "data/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run_new_pair/z.14.pkl"
 
-z = load_pkl(zfile)
+import pickle
+with open(zfile, "rb") as f:
+    z = pickle.load(f)
+    z_logvar = pickle.load(f)
 zdim = z.shape[-1]
 
-dimred = UMAP(n_components=2, random_state=42, n_neighbors =200, min_dist=0.01)
-data_flex = dimred.fit_transform(z)
+# dimred = UMAP(n_components=2, random_state=42, n_neighbors =200, min_dist=0.01)
+# data_flex = dimred.fit_transform(z)
 
-dimred_pca = PCA(n_components=2)
-data_flex_pca = dimred_pca.fit_transform(z)
+# dimred_pca = PCA(n_components=2)
+# data_flex_pca = dimred_pca.fit_transform(z)
 
-cmap = "hsv"
-fig, ax = plt.subplots(1,1, figsize=(10,10))
-ax.scatter(data[:,0], data[:,1], cmap="hsv", alpha=0.1, c=np.arange(100000), s =5)
-fig.savefig("/home/vuillemr/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run_new_pair/test_umap.png")
+# cmap = "hsv"
+# fig, ax = plt.subplots(1,1, figsize=(10,10))
+# ax.scatter(data[:,0], data[:,1], cmap="hsv", alpha=0.1, c=np.arange(100000), s =5)
+# fig.savefig("/home/vuillemr/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run_new_pair/test_umap.png")
 
 
 import glob
 from Bio.SVDSuperimposer import SVDSuperimposer
 from Bio.PDB import PDBParser, Superimposer, is_aa
 from Bio.PDB import PDBIO
+import numpy as np
+from sklearn.decomposition import PCA
 
 def get_coordinates(structure):
     coordinates = []
@@ -899,7 +904,15 @@ ax[0].set_ylabel("PC2")
 ax[0].set_xlabel("PC1")
 ax[0].set_title("GT")
 
-ax[1].scatter(data_flex_pca[:,0], data_flex_pca[:,1], cmap="hsv", alpha=0.11, c=np.roll(np.arange(100000),39202), s =1)
+step=1
+s = np.exp(np.linalg.norm(z_logvar, axis=-1))
+s = s.max() - s
+s /= s.max() 
+alpha = np.linalg.norm(z_logvar, axis=-1)
+alpha = alpha.max() - alpha
+alpha/= alpha.max()
+
+ax[1].scatter(z[::step,0], z[::step,1], cmap="hsv", alpha=0.1, c=np.arange(100000)[::step], s =1)
 ax[1].spines['top'].set_visible(False)
 ax[1].spines['right'].set_visible(False)
 # ax[1].spines['bottom'].set_visible(False)
@@ -908,8 +921,8 @@ ax[1].set_xticks([])
 ax[1].set_yticks([])
 ax[1].set_xticklabels([])
 ax[1].set_yticklabels([])
-ax[1].set_ylabel("PC2")
-ax[1].set_xlabel("PC1")
+ax[1].set_ylabel("Z2")
+ax[1].set_xlabel("Z1")
 ax[1].set_title("CryoARC")
 fig.savefig("/home/vuillemr/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run_new_pair/circle.png",dpi=300)
 

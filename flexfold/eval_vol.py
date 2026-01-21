@@ -1,17 +1,19 @@
-"""Evaluate the decoder of a heterogeneous model at given z-latent-space co-ordinates.
+# -----------------------------------------------------------------------------
+# This file is derived from code in the cryoDRGN project:
+#     https://github.com/zhonge/cryodrgn
+#
+# Original authors: cryoDRGN contributors
+# License: GNU General Public License v3.0 (GPL-3.0)
+#
+# Modifications:
+#   - Adapted and extended for CryoARC
+#   - Modifications by Rémi Vuillemot, 2025
+#
+# This file remains subject to the GPL-3.0 license.
+# See the LICENSE file in the original repository for details.
+# -----------------------------------------------------------------------------
 
-Example usage
--------------
-# This model used the default of zdim=8
-$ cryodrgn eval_vol 004_vae128/weights.pkl -c 004_vae128/config.yaml \
-                                           -o zero-vol.mrc -z 0 0 0 0 0 0 0 0
 
-# We can instead specify a z-latent-space path instead of a single location
-# Here the model was trained using zdim=4
-$ cryodrgn eval_vol 004_vae128/weights.pkl -c 004_vae128/config.yaml -o zero-vol.mrc \
-                                           --z-start 0 -1 0 0 --z-end 1 1 1 1
-
-"""
 import argparse
 import os
 import pprint
