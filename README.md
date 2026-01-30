@@ -1,26 +1,12 @@
-*** CryoARC - Cryo-EM Atomic-Resolution Conformations*
+# CryoARC - Cryo-EM Atomic-Resolution Conformations
 
+# Installation
 
-git clone https://github.com/ml-struct-bio/cryodrgn.git
-git clone https://github.com/aqlaboratory/openfold.git
+```
+mamba env create -f cryoarc/environment.yml
+mamba activate cryoarc
+```
 
-conda create -n mamba_env python=3.12 mamba -c conda-forge
-conda activate mamba_env
-
-conda deactivate
-conda env remove --name flexfold
-
-mamba env create -n flexfold -f openfold/environment.yml
-conda activate flexfold
-pip uninstall -y flash_attn
-pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.5cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
-pip install cryodrgn
-
-cd openfold
-scripts/install_third_party_dependencies.sh
-
-cd ~/flexfold
-conda activate flexfold
-export PYTHONPATH=~/flexfold:$PYTHONPATH
-export PYTHONPATH=~/openfold:$PYTHONPATH
-export PYTHONPATH=~/cryodrgn:$PYTHONPATH
+```
+./install_openfold_dependencies.sh
+```
