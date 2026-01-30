@@ -27,6 +27,8 @@ xmipp_image_resize -i particles_filtered.xmd -o particles_downsampled.mrcs --dim
 python ~/flexfold/scripts/rln2xmp.py particles_downsampled.xmd particles_downsampled.star --inverse --optics_group_from particles_ctf.star --add_missing_cols_from particles_ctf.star --pixel_size 1.58 --dimension 128
 
 # Convert metadata
+cryodrgn parse_ctf_star $BASE_DIR/particles_ctf.star -o $BASE_DIR/ctf_full.pkl
+cryodrgn parse_pose_star $BASE_DIR/particles_ctf.star -o $BASE_DIR/particles_full.pkl
 cryodrgn parse_ctf_star $BASE_DIR/particles_downsampled.star -o $BASE_DIR/ctf.pkl
 cryodrgn parse_pose_star $BASE_DIR/particles_downsampled.star -o $BASE_DIR/particles.pkl
 # Backproject for verification
@@ -198,3 +200,51 @@ python ./flexfold/scripts/flexible_backprojection.py  \
 
 
 python ./flexfold/scripts/flexible_backprojection.py  -o $RUN_DIR/backproject_flex/ --wiener_constant 0.1 --pixel_size 1.58 --volumes $RUN_DIR/backproject_flex
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+BASE_DIR="/home/vuillemr/flexfold/data/cryofold/jillsData/new_data"
+RUN_DIR=$BASE_DIR/run_new_data
+
+
+
+cryodrgn parse_ctf_star $BASE_DIR/J2424_003_particles.star -o $BASE_DIR/ctf.pkl
+cryodrgn parse_pose_star $BASE_DIR/J2424_003_particles.star -o $BASE_DIR/particles.pkl
+cryodrgn backproject_voxel $BASE_DIR/J2424_003_particles.star --poses $BASE_DIR/particles.pkl --ctf $BASE_DIR/ctf.pkl -o $BASE_DIR/backproject --lazy

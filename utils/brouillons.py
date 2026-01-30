@@ -1597,3 +1597,78 @@ for f in run_new/reference.pdb; do
   base=${f##*/}
   { head -n 137 ss.pdb; cat "$f"; } > "$dir/new_$base"
 done
+
+
+########################################"""
+import matplotlib
+matplotlib.use("TkAgg")
+import matplotlib.pyplot as plt
+import numpy as np
+res = np.array([214,920 ,1494, 1344 ])
+names = ["AdK", "PfCRT", "HER2", "IgG"]
+time_ = 1/np.array([1.2, 0.4, 0.24,0.27])
+time = 1/np.array([4.3, 2.5, 0.72,1.17])
+mem = np.array([2.5, 15.5, 55.5,38])
+imsize = np.array([128, 300, 280,128])
+plt.rcParams["font.size"] = 14
+
+rmax = 1800
+rmin = 100
+
+p = 2.8
+fig, ax = plt.subplots(1,2, figsize=(10,4.5), layout="constrained")
+xfit = np.linspace(rmin, rmax, 200)
+
+a, c = np.polyfit(res**3, time, 1)
+yfit = a * xfit**3 +  c
+ax[0].plot(xfit, yfit, "--", color="grey", label="$\mathcal{O}(N_\mathrm{res}^3)$")
+
+ax[0].plot(res,time, "o")
+for i in range(4):
+    ax[0].annotate(names[i], (50+res[i],time[i]), fontsize=12)
+# ax[0].annotate("$x^2$", (1750,5.5), color="grey")
+ax[0].set_xlabel("Residue count")
+ax[0].set_ylabel("Compute time (s)")
+
+
+a, c = np.polyfit(res**2, mem, 1)
+yfit = a * xfit**2 +  c
+ax[1].plot(xfit, yfit, "--", color="grey", label="$\mathcal{O}(N_\mathrm{res}^2)$")
+
+
+ax[1].plot(res,mem, "o")
+for i in range(4):
+    ax[1].annotate(names[i], (50+res[i],mem[i]), fontsize=12)
+# ax[1].annotate("$x^2$", (1750,5.5), color="grey")
+ax[1].set_xlabel("Residue count")
+ax[1].set_ylabel("GPU Memory (GB)")
+ax[1].set_title("GPU Memory (per particle, per GPU)")
+ax[0].set_title("Compute time (per particle, per GPU)")
+
+ax[0].legend(fontsize=14)
+ax[1].legend(fontsize=14)
+fig.show()
+fig.savefig("/home/vuillemr/remote_bettik/openfold_data/data/cryofold/compute_stats.svg")
+
+
+
+
+
+import numpy as np 
+
+ind = np.concatenate([np.loadtxt("/home/vuillemr/flexfold/data/cryofold/jillsData/particles/run_mlp_new2/chunk_%i_indices.txt"%i) for i in range(3)])
+indall = np.arange(392148)
+ind4 = []
+for i in indall:
+    print(i)
+    if i not in ind:
+        ind4.append(i)
+
+
+ind4 = np.array(ind4)
+ind4.shape
+np.savetxt( "/home/vuillemr/flexfold/data/cryofold/jillsData/particles/run_mlp_new2/chunk_3_indices.txt",ind4)
+
+from flexfold.core import ifft2_center, unsymmetrize_ht, fft3center, ifft3center, dcd2numpyArr, numpyArr2dcd
+
+dcd = dcd2numpyArr("/home/vuillemr/flexfold/data/cryofold/jillsData/particles/run_mlp_new2/chunk_3_coordinates.dcd")

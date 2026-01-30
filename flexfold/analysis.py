@@ -1,3 +1,19 @@
+# -----------------------------------------------------------------------------
+# This file is derived from code in the cryoDRGN project:
+#     https://github.com/zhonge/cryodrgn
+#
+# Original authors: cryoDRGN contributors
+# License: GNU General Public License v3.0 (GPL-3.0)
+#
+# Modifications:
+#   - Adapted and extended for CryoARC
+#   - Modifications by Rémi Vuillemot, 2025
+#
+# This file remains subject to the GPL-3.0 license.
+# See the LICENSE file in the original repository for details.
+# -----------------------------------------------------------------------------
+
+
 import argparse
 import re
 import logging

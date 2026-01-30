@@ -820,7 +820,7 @@ from cryodrgn.models import HetOnlyVAE
 from cryodrgn import config
 from cryodrgn.utils import load_pkl
 import matplotlib.pyplot as plt
-
+import numpy as np
 ax_col = "darkslategray"
 plt.rcParams.update({
     "axes.labelcolor":ax_col,
@@ -837,6 +837,7 @@ plt.rcParams.update({
 
 "data/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run_new_pair/weights.14.pkl"
 zfile = "data/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run_new_pair/z.14.pkl"
+zfile = "data/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run2/z.20.pkl"
 
 import pickle
 with open(zfile, "rb") as f:
@@ -850,10 +851,12 @@ zdim = z.shape[-1]
 # dimred_pca = PCA(n_components=2)
 # data_flex_pca = dimred_pca.fit_transform(z)
 
-# cmap = "hsv"
-# fig, ax = plt.subplots(1,1, figsize=(10,10))
-# ax.scatter(data[:,0], data[:,1], cmap="hsv", alpha=0.1, c=np.arange(100000), s =5)
-# fig.savefig("/home/vuillemr/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run_new_pair/test_umap.png")
+cmap = "hsv"
+fig, ax = plt.subplots(1,1, figsize=(10,10))
+ax.scatter(z[:,0], z[:,1], cmap="jet", alpha=0.1, c=np.linalg.norm(z_logvar, axis=-1), s =5)
+fig.savefig("/home/vuillemr/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run2/z1.png")
+
+np.savetxt("/home/vuillemr/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run2/z.txt", z.reshape(100,125,4).mean(axis=1))
 
 
 import glob
@@ -862,6 +865,143 @@ from Bio.PDB import PDBParser, Superimposer, is_aa
 from Bio.PDB import PDBIO
 import numpy as np
 from sklearn.decomposition import PCA
+from flexfold.core import ifft2_center, unsymmetrize_ht, fft3center, ifft3center, dcd2numpyArr, numpyArr2dcd
+from flexfold.models import map_sequences     
+from Bio.SeqUtils import seq1
+from Bio.PDB import Structure
+
+def get_ca_indices(structure):
+    """
+    Returns the indices of all CA atoms in the all-atom array of a BioPython structure.
+
+    Args:
+        structure (Bio.PDB.Structure.Structure): The input structure.
+
+    Returns:
+        list: A list of indices (0-based) of all CA atoms in the all-atom array.
+    """
+    ca_indices = []
+    all_atom_index = 0  # Global index counter
+
+    for model in structure:
+        for chain in model:
+            for residue in chain:
+                if "CA" in residue:
+                    ca_indices.append(all_atom_index)
+                # Increment the global index for every atom in the residue
+                for atom in residue:
+                    all_atom_index += 1
+
+    return ca_indices
+
+def aligned_rmsd_with_indices(structure1, structure2):
+    def get_ca_atoms_and_indices(structure):
+        atoms = {}
+        chainres = {}
+        atom_indices = {}  # To store global indices of CA atoms
+        global_index = 0   # Running count of all atoms (or just CA atoms)
+
+        for model in structure:
+            for chain in model:
+                atoms[chain.id] = []
+                chainres[chain.id] = ""
+                atom_indices[chain.id] = []
+
+                for residue in chain:
+                    if is_aa(residue, standard=False) and "CA" in residue:
+                        atoms[chain.id].append(residue["CA"])
+                        chainres[chain.id] += seq1(residue.get_resname(), custom_map={"MSE": "M", "SEP": "S"})
+                        atom_indices[chain.id].append(global_index)
+                    global_index += 1  # Increment for every atom (or just for CA atoms)
+
+        return atoms, chainres, atom_indices
+
+    def map_res_chains(structure1, structure2):
+        atoms1, chain_seq1, indices1 = get_ca_atoms_and_indices(structure1)
+        atoms2, chain_seq2, indices2 = get_ca_atoms_and_indices(structure2)
+
+        mapping = [map_sequences(s1, s2) for s1, s2 in zip(chain_seq1.values(), chain_seq2.values())]
+
+        # Get the indices of matching CA atoms in both structures
+        indices1_mapped = [
+            indices1[list(atoms1.keys())[c]][i]
+            for c, m in enumerate(mapping)
+            for i, v in enumerate(m)
+            if v != -1
+        ]
+        indices2_mapped = [
+            indices2[list(atoms2.keys())[c]][v]
+            for c, m in enumerate(mapping)
+            for i, v in enumerate(m)
+            if v != -1
+        ]
+
+        atoms1_mapped = [list(atoms1.values())[c][i] for c, m in enumerate(mapping) for i, v in enumerate(m) if v != -1]
+        atoms2_mapped = [list(atoms2.values())[c][v] for c, m in enumerate(mapping) for i, v in enumerate(m) if v != -1]
+
+        seq1_mapped = "".join([list(chain_seq1.values())[c][i] for c, m in enumerate(mapping) for i, v in enumerate(m) if v != -1])
+        seq2_mapped = "".join([list(chain_seq2.values())[c][v] for c, m in enumerate(mapping) for i, v in enumerate(m) if v != -1])
+
+        n_atoms = sum([len(i) for i in mapping])
+        n_match = sum([i == j for i, j in zip(seq1_mapped, seq2_mapped)])
+
+        assert n_match / n_atoms > 0.9
+
+        return atoms1_mapped, atoms2_mapped, indices1_mapped, indices2_mapped
+
+    atoms1, atoms2, indices1, indices2 = map_res_chains(structure1, structure2)
+
+    # Superimpose and calculate RMSD
+    sup = Superimposer()
+    sup.set_atoms(atoms1, atoms2)  # This aligns atoms2 onto atoms1
+    rmsd = sup.rms
+
+    return rmsd, indices1, indices2
+
+def aligned_rmsd(structure1, structure2):
+    def get_ca_atoms(structure):
+        atoms = {}
+        chainres = {}
+        for model in structure:
+            for chain in model:
+                atoms[chain.id] = []
+                chainres[chain.id] = ""
+
+                for residue in chain:
+                    if is_aa(residue, standard=False) and "CA" in residue:
+                        atoms[chain.id].append(residue["CA"])
+                        chainres[chain.id] += seq1(residue.get_resname(), custom_map={"MSE": "M", "SEP": "S"}) 
+        return atoms, chainres
+
+    def map_res_chains(structure1, structure2):
+        atoms1, chain_seq1 = get_ca_atoms(structure1)
+        atoms2, chain_seq2 = get_ca_atoms(structure2)
+
+        mapping = [map_sequences(s1, s2) for s1,s2 in zip(chain_seq1.values(), chain_seq2.values())]
+        print("Mapped chains : ", len(mapping))
+        print("Mapped atoms : ",sum([len(i) for i in mapping]))
+
+        atoms1_mapped = [list(atoms1.values())[c][i] for c,m in enumerate(mapping) for i,v in enumerate(m) if v!=-1 ]
+        atoms2_mapped = [list(atoms2.values())[c][v] for c,m in enumerate(mapping) for i,v in enumerate(m) if v!=-1 ]
+
+        seq1_mapped = "".join([list(chain_seq1.values())[c][i] for c,m in enumerate(mapping) for i,v in enumerate(m) if v!=-1 ])
+        seq2_mapped = "".join([list(chain_seq2.values())[c][v] for c,m in enumerate(mapping) for i,v in enumerate(m) if v!=-1 ])
+
+        n_atoms = sum([len(i) for i in mapping])
+        n_match = sum([i==j for i,j in zip(seq1_mapped,seq2_mapped)])
+
+        assert n_match/n_atoms >0.9
+
+        return atoms1_mapped, atoms2_mapped
+
+    atoms1, atoms2 = map_res_chains(structure1, structure2)
+
+    # Superimpose and calculate RMSD
+    sup = Superimposer()
+    sup.set_atoms(atoms1, atoms2)  # This aligns atoms2 onto atoms1
+    rmsd = sup.rms
+    return rmsd
+
 
 def get_coordinates(structure):
     coordinates = []
@@ -882,26 +1022,68 @@ for f in pdb_files:
     print(f)
     structure = parser.get_structure("", f)
     coordinates.append(get_coordinates(structure))
+coordinates = np.array(coordinates)
+coordinates -= coordinates.mean(axis=(0,1))
+
+crd = dcd2numpyArr("data/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run2/chunk_0_coordinates.dcd")
+# crd = crd[:-1]
+crd -= crd.mean(axis=(0,1))
+struct =  parser.get_structure("","data/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run2/reference.pdb")
+
+from Bio.PDB import PDBIO
+
+def save_structure_to_pdb(structure, output_path):
+    """
+    Save a BioPython Structure object to a PDB file.
+
+    Args:
+        structure (Bio.PDB.Structure.Structure): The structure to save.
+        output_path (str): Path to the output PDB file.
+    """
+    io = PDBIO()
+    io.set_structure(structure)
+    io.save(output_path)
+
+# save_structure_to_pdb(struct, "data/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run_new_pair/reference_fixed.pdb")
+
+numpyArr2dcd(crd.reshape(100,125,-1,3).mean(axis=1) , "data/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run2/coordinates_avg.dcd")
+
+numpyArr2dcd(coordinates, "data/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run2/coordinates_gt.dcd")
 
 
+aligned_rmsd(struct, structure)
+rmsd ,ind1, ind2 = aligned_rmsd_with_indices(struct, structure)
+ind1 = np.array(ind1)
+ind2 = np.array(ind2)
+
+ind1_ca = np.array(get_ca_indices(struct))
+ind2_ca = np.array(get_ca_indices(structure))
+
+# crd1_center = crd - crd.mean(axis=(0,1))
+# crd2_center = coordinates - coordinates.mean(axis=(0,1))
+rmsds = np.mean(np.sqrt(np.mean(np.square(np.sum(crd[:,ind1_ca][:,ind1].reshape(100,125,-1,3) - coordinates[:,ind2_ca][:,ind2][:, None], axis=-1)), axis=-1)), axis=-1)
+
+
+combined_crd = np.concatenate((coordinates[:,ind2_ca][:,ind2], crd[:,ind1_ca][:,ind1]))
 
 dimred_gt = PCA(n_components=2)
 # dimred = PCA(n_components=2)
-data_gt = dimred_gt.fit_transform(np.array(coordinates).reshape(100,-1))
+data_gt = dimred_gt.fit_transform(combined_crd.reshape(combined_crd.shape[0],-1))
+data_gt /= combined_crd.shape[1]**0.5
 
 cmap = "hsv"
 fig, ax = plt.subplots(1,2, figsize=(10,5), layout="constrained")
-ax[0].scatter(data_gt[:,0], data_gt[:,1], cmap="hsv", alpha=1, c=np.roll(np.arange(100), 86), s =50)
+ax[0].scatter(data_gt[:100,0], data_gt[:100,1], cmap="hsv", alpha=1, c=np.arange(100), s =50)
 ax[0].spines['top'].set_visible(False)
 ax[0].spines['right'].set_visible(False)
 # ax[0].spines['bottom'].set_visible(False)
 # ax[0].spines['left'].set_visible(False)
-ax[0].set_xticks([])
-ax[0].set_yticks([])
-ax[0].set_xticklabels([])
-ax[0].set_yticklabels([])
-ax[0].set_ylabel("PC2")
-ax[0].set_xlabel("PC1")
+# ax[0].set_xticks([])
+# ax[0].set_yticks([])
+# ax[0].set_xticklabels([])
+# ax[0].set_yticklabels([])
+ax[0].set_ylabel("PC2 ($\AA$)")
+ax[0].set_xlabel("PC1 ($\AA$)")
 ax[0].set_title("GT")
 
 step=1
@@ -911,23 +1093,27 @@ s /= s.max()
 alpha = np.linalg.norm(z_logvar, axis=-1)
 alpha = alpha.max() - alpha
 alpha/= alpha.max()
+# ax[1].scatter(data_gt[:100,0], data_gt[:100,1], cmap="hsv", alpha=1, c=np.arange(100), s =50)
 
-ax[1].scatter(z[::step,0], z[::step,1], cmap="hsv", alpha=0.1, c=np.arange(100000)[::step], s =1)
+ax[1].scatter(data_gt[100::step,0], data_gt[100::step,1], cmap="hsv", alpha=0.1, c=np.arange(12500)[::step], s =5)
 ax[1].spines['top'].set_visible(False)
 ax[1].spines['right'].set_visible(False)
 # ax[1].spines['bottom'].set_visible(False)
 # ax[1].spines['left'].set_visible(False)
-ax[1].set_xticks([])
-ax[1].set_yticks([])
-ax[1].set_xticklabels([])
-ax[1].set_yticklabels([])
-ax[1].set_ylabel("Z2")
-ax[1].set_xlabel("Z1")
+# ax[1].set_xticks([])
+# ax[1].set_yticks([])
+# ax[1].set_xticklabels([])
+# ax[1].set_yticklabels([])
+ax[1].set_ylabel("PC2 ($\AA$)")
+ax[1].set_xlabel("PC1 ($\AA$)")
 ax[1].set_title("CryoARC")
-fig.savefig("/home/vuillemr/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run_new_pair/circle.png",dpi=300)
+fig.savefig("/home/vuillemr/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run2/combined_pca.svg",dpi=300)
 
+fig, ax = plt.subplots(1,1, figsize=(10,5), layout="constrained")
 
+plt.plot(rmsds, "x")
 
+fig.savefig("/home/vuillemr/cryofold/cryobench_IgD/IgG-1D/images/snr0.01/run2/rmsds.svg")
 
 
 

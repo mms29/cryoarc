@@ -217,17 +217,12 @@ python ./flexfold/scripts/flexible_backprojection.py  \
 
 
 
-
-python ./flexfold/scripts/flexible_backprojection.py \
- -i /home/vuillemr/flexfold/data/cryofold/AKMD/snr1/run/ -o /home/vuillemr/flexfold/data/cryofold/AKMD/snr1/backproject_test\
- --batch_size 16 --particles /home/vuillemr/flexfold/data/cryofold/AKMD/snr0.005/Particles/particles.mrcs \
-  --poses  /home/vuillemr/flexfold/data/cryofold/AKMD/snr1/particles.pkl --ctf /home/vuillemr/flexfold/data/cryofold/AKMD/snr1/ctf.pkl \
-  --wiener_constant 1.0  --sigma 4.0 --gaussian_threshold 0.80
-
-
-
-
-
+BASE_DIR="/home/vuillemr/flexfold/data/cryofold/AKMD/snr0.1"
+RUN_DIR=$BASE_DIR/run_4ake_conv_mlp
+python ./flexfold/scripts/flexible_backprojection.py  --reference $RUN_DIR/reference.pdb -o $RUN_DIR/backproject_test/ --chunk   \
+            --coordinates "$RUN_DIR/chunk_*_coordinates.dcd" --indices "$RUN_DIR/chunk_*_indices.txt" --coefs $RUN_DIR/coefs.pt    \
+            --batch_size 32 --particles $BASE_DIR/Particles/particles.mrcs --poses  $BASE_DIR/particles.pkl --ctf $BASE_DIR/ctf.pkl  \
+            --wiener_constant 1.0 --sigma 1.0 --gaussian_threshold 0.9 --pixel_size 1.0
 
 RUN_DIR=$BASE_DIR/run_dynamight
 
@@ -286,5 +281,5 @@ for pdbid in 4ake 2rh5 3cm0 1p3j 1p4s 4k46 1ki9 1aky 5x6k; do
 done
 
 BASE_DIR="/home/vuillemr/flexfold/data/cryofold/AKMD/"
-
-python ./scripts/assert.py -i $RUN_DIR -o $RUN_DIR --gt_pdbs "$BASE_DIR/../pdbs/*pdb" --gt_vols "$BASE_DIR/../vols128/*mrc" --epoch 99 --drgn --skip 50
+RUN_DIR=$BASE_DIR/snr0.1/run_4ake_conv_mlp/
+python flexfold/scripts/assert.py -i $RUN_DIR -o $RUN_DIR --gt_pdbs "$BASE_DIR/pdbs/*pdb" --gt_vols "$BASE_DIR/vols128/*mrc" --epoch 99 --skip 50

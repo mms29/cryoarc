@@ -1,50 +1,25 @@
 
 import argparse
 import os
-import pickle
-import sys
-import contextlib
 import logging
 from datetime import datetime as dt
-from typing import Optional
-import numpy as np
+
 import torch
-import torch.nn as nn
-from torch.nn.parallel import DataParallel
-import torch.nn.functional as F
 
-try:
-    import apex.amp as amp  # type: ignore  # PYR01
-except ImportError:
-    pass
 
-import cryodrgn
-from cryodrgn import __version__, ctf
-from cryodrgn.beta_schedule import get_beta_schedule
-
-import cryodrgn.config
-from cryodrgn import fft
-from cryodrgn.source import write_mrc
 from openfold.utils.tensor_utils import tensor_tree_map
 
-from openfold.utils.loss import fape_loss, compute_renamed_ground_truth, supervised_chi_loss, find_structural_violations, violation_loss
-import matplotlib.pyplot as plt
+from openfold.utils.loss import fape_loss,  supervised_chi_loss, find_structural_violations, violation_loss
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import CSVLogger
 
-
-from flexfold.lattice import Lattice
-from flexfold import dataset
-
-from flexfold.models import HetOnlyVAE, AFDecoderReal, AFDecoder, struct_to_crd
-from flexfold.pose import PoseTracker
-from flexfold.core import vol_real, get_cc, fourier_corr, output_single_pdb, struct_to_pdb
+from flexfold.core import  struct_to_pdb
 from pytorch_lightning.strategies import DDPStrategy
 
 # from openfold.utils.loss import fape_loss, compute_renamed_ground_truth
 from torch.utils.data import Dataset, DataLoader
 
-from flexfold.scripts.train import LitDataModule,LitHetOnlyVAE, save_checkpoint, save_config, add_args
+from flexfold.scripts.train import LitDataModule,LitHetOnlyVAE, save_checkpoint,  add_args
 from pytorch_lightning.plugins.environments import MPIEnvironment
 
 logger = logging.getLogger(__name__)

@@ -310,3 +310,9 @@ def main(args: argparse.Namespace) -> None:
 
         td = dt.now() - t1
         logger.info(f"Finished in {td}")
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    add_args(parser)
+
+    args = parser.parse_args()
+    main(args)

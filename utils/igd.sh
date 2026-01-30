@@ -74,9 +74,10 @@ cryodrgn analyze -o $RUN_DIR/analysis $RUN_DIR 99 --pc 2
 
 
 BASE_DIR="../cryofold/cryobench_IgD/IgG-1D/images/snr0.01"
-RUN_DIR=$BASE_DIR/run_new_pair
+RUN_DIR=$BASE_DIR/run2
 
-
+python ./flexfold/scripts/trajectory_from_model.py $RUN_DIR $RUN_DIR --epoch 20  --batch_size 1 --num_nodes 1 --devices 1
+python ./flexfold/eval_vol.py $RUN_DIR/weights.20.pkl -c $RUN_DIR/config.yaml -o $RUN_DIR/analysis/test --zfile  $RUN_DIR/z.txt --no_volume
 
 python ./flexfold/scripts/flexible_backprojection.py  \
     --reference $RUN_DIR/reference.pdb\

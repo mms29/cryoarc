@@ -1,64 +1,34 @@
-"""Train a VAE for heterogeneous reconstruction with known poses.
 
-Example usage
--------------
-$ cryodrgn train_vae projections.mrcs -o outs/002_trainvae --lr 0.0001 --zdim 8 \
-                                      --poses angles.pkl --ctf test_ctf.pkl -n 25
-
-# Restart after already running the same command with some epochs completed
-$ cryodrgn train_vae projections.mrcs -o outs/002_trainvae --lr 0.0001 --zdim 8 \
-                                      --poses angles.pkl --ctf test_ctf.pkl \
-                                      --load latest -n 50
-
-# cryoDRGN-ET tilt series reconstruction
-$ cryodrgn train_vae particles_from_M.star --datadir particleseries -o your-outdir \
-                                           --ctf ctf.pkl --poses pose.pkl \
-                                           --encode-mode tilt --dose-per-tilt 2.93 \
-                                           --zdim 12 --num-epochs 50 --beta .025
-
-"""
 import argparse
 import os
 import pickle
 import sys
-import contextlib
 import logging
 from datetime import datetime as dt
-from typing import Optional
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.nn.parallel import DataParallel
 import torch.nn.functional as F
 from pytorch_lightning.plugins.environments import MPIEnvironment
-from functools import partial
-try:
-    import apex.amp as amp  # type: ignore  # PYR01
-except ImportError:
-    pass
+
 
 import cryodrgn
 from cryodrgn import __version__, ctf
 from cryodrgn.beta_schedule import get_beta_schedule
 
 import cryodrgn.config
-from cryodrgn import fft
-from cryodrgn.source import write_mrc
-from openfold.utils.tensor_utils import tensor_tree_map
 
-from openfold.utils.loss import fape_loss, compute_renamed_ground_truth, supervised_chi_loss, find_structural_violations, violation_loss
+from openfold.utils.loss import  supervised_chi_loss, find_structural_violations, violation_loss
 import matplotlib.pyplot as plt
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import CSVLogger
-from openfold.model.structure_module import StructureModule
-
 
 from flexfold.lattice import Lattice
 from flexfold import dataset
 
-from flexfold.models import HetOnlyVAE, AFDecoderReal, AFDecoder, struct_to_crd, EncodeTable
+from flexfold.models import HetOnlyVAE, AFDecoderReal, AFDecoder, EncodeTable
 from flexfold.pose import PoseTracker
-from flexfold.core import vol_real, get_cc, fourier_corr, output_single_pdb, struct_to_pdb,weighted_normalized_l2, gaussian_weight, frequency_weights
+from flexfold.core import  get_cc, fourier_corr, output_single_pdb
 from pytorch_lightning.strategies import DDPStrategy
 from scipy.ndimage import gaussian_filter
 from flexfold.core import ifft2_center, unsymmetrize_ht, rotmat_angle_deg

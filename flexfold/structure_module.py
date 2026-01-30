@@ -1,6 +1,21 @@
+# -----------------------------------------------------------------------------
+# This file is derived from code in the OpenFold project:
+#     https://github.com/aqlaboratory/openfold
+#
+# Original authors: OpenFold contributors
+# License: Apache License 2.0
+#
+# Modifications:
+#   - Adapted and extended for <your method / project name>
+#   - Modifications by Rémi Vuillemot, 2025
+#
+# You may not remove or change the original copyright notices.
+# See the LICENSE file in the original repository for details.
+# -----------------------------------------------------------------------------
+
+
 
 import sys
-
 import torch
 import torch.nn as nn
 
