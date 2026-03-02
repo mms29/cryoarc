@@ -11,7 +11,7 @@ import numpy as np
 from openfold.data.data_modules import  OpenFoldSingleDataset
 from openfold.utils.import_weights import convert_deprecated_v1_keys
 
-from flexfold.core import output_single_pdb
+from cryoarc.core import output_single_pdb
 
 def resume_ckpt(resume_from_ckpt, model, config):
     sd = torch.load(resume_from_ckpt)

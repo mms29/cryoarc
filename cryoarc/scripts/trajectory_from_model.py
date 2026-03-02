@@ -2,8 +2,8 @@
 import torch 
 from cryodrgn import config
 from cryodrgn.utils import load_pkl
-from flexfold.core import dcd2numpyArr, numpyArr2dcd, struct_to_pdb
-from flexfold.models import HetOnlyVAE, struct_to_crd
+from cryoarc.core import dcd2numpyArr, numpyArr2dcd, struct_to_pdb
+from cryoarc.models import HetOnlyVAE, struct_to_crd
 import numpy as np
 import tqdm
 from openfold.utils.tensor_utils import tensor_tree_map

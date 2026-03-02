@@ -25,7 +25,7 @@ from cryodrgn import fft, lie_tools
 import cryodrgn.config
 
 from openfold.model.structure_module import StructureModule
-from flexfold.structure_module import StructureModuleCheckpoint
+from cryoarc.structure_module import StructureModuleCheckpoint
 from openfold.utils.feats import (
     atom14_to_atom37,
 )
@@ -40,8 +40,8 @@ from openfold.utils.tensor_utils import (
 )
 import os
 
-from flexfold.lattice import Lattice
-from flexfold.core import (img_ft_lattice, img_ht_lattice, img_real, get_pixel_mask, 
+from cryoarc.lattice import Lattice
+from cryoarc.core import (img_ft_lattice, img_ht_lattice, img_real, get_pixel_mask, 
                             img_real_mask, vol_real_mask, get_voxel_mask, register_crd_to_vol, aatype_to_coefs)
 
 from openfold.utils.import_weights import convert_deprecated_v1_keys
@@ -59,7 +59,7 @@ from openfold.data.data_pipeline import add_assembly_features, make_sequence_fea
 from openfold.data.data_pipeline import  DataPipelineMultimer, DataPipeline
 
 import itertools
-from flexfold.structure_module import checkpoint_blocks
+from cryoarc.structure_module import checkpoint_blocks
 
 
 NUM_RES = "num residues placeholder"

@@ -23,18 +23,18 @@ import matplotlib.pyplot as plt
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import CSVLogger
 
-from flexfold.lattice import Lattice
-from flexfold import dataset
+from cryoarc.lattice import Lattice
+from cryoarc import dataset
 
-from flexfold.models import HetOnlyVAE, AFDecoderReal, AFDecoder, EncodeTable
-from flexfold.pose import PoseTracker
-from flexfold.core import  get_cc, fourier_corr, output_single_pdb
+from cryoarc.models import HetOnlyVAE, AFDecoderReal, AFDecoder, EncodeTable
+from cryoarc.pose import PoseTracker
+from cryoarc.core import  get_cc, fourier_corr, output_single_pdb
 from pytorch_lightning.strategies import DDPStrategy
 from scipy.ndimage import gaussian_filter
-from flexfold.core import ifft2_center, unsymmetrize_ht, rotmat_angle_deg
+from cryoarc.core import ifft2_center, unsymmetrize_ht, rotmat_angle_deg
 from torch.optim.lr_scheduler import LambdaLR
-from flexfold.lora import apply_lora_config_to_model, lora_light, full_no_angle
-from flexfold.core import plot_loss
+from cryoarc.lora import apply_lora_config_to_model, lora_light, full_no_angle
+from cryoarc.core import plot_loss
 from cryodrgn import lie_tools
 
 def is_global_rank0() -> bool:

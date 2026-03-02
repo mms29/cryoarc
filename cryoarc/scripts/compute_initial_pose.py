@@ -1,9 +1,9 @@
 
 import torch
 import argparse
-from flexfold.models import struct_to_crd
+from cryoarc.models import struct_to_crd
 from cryodrgn.mrcfile import write_mrc, parse_mrc
-from flexfold.core import vol_real, vol_ft, register_crd_to_vol,matrix2euler, struct_to_pdb, get_free_mem
+from cryoarc.core import vol_real, vol_ft, register_crd_to_vol,matrix2euler, struct_to_pdb, get_free_mem
 import torch
 from openfold.utils.tensor_utils import tensor_tree_map
 

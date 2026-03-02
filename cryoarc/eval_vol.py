@@ -22,8 +22,8 @@ import logging
 import numpy as np
 import torch
 from cryodrgn import config
-from flexfold.models import HetOnlyVAE, AFDecoder
-from flexfold.core import output_single_pdb
+from cryoarc.models import HetOnlyVAE, AFDecoder
+from cryoarc.core import output_single_pdb
 from openfold.utils.tensor_utils import tensor_tree_map
 
 from cryodrgn.source import write_mrc

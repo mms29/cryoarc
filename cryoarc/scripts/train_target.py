@@ -13,13 +13,13 @@ from openfold.utils.loss import fape_loss,  supervised_chi_loss, find_structural
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import CSVLogger
 
-from flexfold.core import  struct_to_pdb
+from cryoarc.core import  struct_to_pdb
 from pytorch_lightning.strategies import DDPStrategy
 
 # from openfold.utils.loss import fape_loss, compute_renamed_ground_truth
 from torch.utils.data import Dataset, DataLoader
 
-from flexfold.scripts.train import LitDataModule,LitHetOnlyVAE, save_checkpoint,  add_args
+from cryoarc.scripts.train import LitDataModule,LitHetOnlyVAE, save_checkpoint,  add_args
 from pytorch_lightning.plugins.environments import MPIEnvironment
 
 logger = logging.getLogger(__name__)

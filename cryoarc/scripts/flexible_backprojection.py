@@ -7,14 +7,14 @@ import torch
 from cryodrgn import config
 from cryodrgn.utils import load_pkl
 import matplotlib.pyplot as plt
-from flexfold.fsc import fourier_shell_correlation, fsc_auc,fsc_thresh, spherical_soft_mask, fourier_mask
+from cryoarc.fsc import fourier_shell_correlation, fsc_auc,fsc_thresh, spherical_soft_mask, fourier_mask
 from matplotlib.ticker import FuncFormatter
 import seaborn as sns
-from flexfold import dataset
-from flexfold.pose import PoseTracker
-from flexfold.lattice import Lattice
+from cryoarc import dataset
+from cryoarc.pose import PoseTracker
+from cryoarc.lattice import Lattice
 from cryodrgn import __version__, ctf
-from flexfold.core import unsymmetrize_ht,  dcd2numpyArr, numpyArr2dcd, get_voxel_mask, vol_real_mask
+from cryoarc.core import unsymmetrize_ht,  dcd2numpyArr, numpyArr2dcd, get_voxel_mask, vol_real_mask
 from cryodrgn.mrcfile import parse_mrc, write_mrc
 import torch.nn.functional as F
 import argparse

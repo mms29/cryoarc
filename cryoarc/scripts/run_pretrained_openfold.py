@@ -58,8 +58,8 @@ from scripts.utils import add_data_args
 from openfold.data import mmcif_parsing
 from openfold.data.data_pipeline import add_assembly_features, make_sequence_features, convert_monomer_features
 from openfold.model.model import AlphaFold
-from flexfold.core import output_single_pdb
-from flexfold.models import get_target_feats
+from cryoarc.core import output_single_pdb
+from cryoarc.models import get_target_feats
 
 
 TRACING_INTERVAL = 50

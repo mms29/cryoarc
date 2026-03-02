@@ -27,8 +27,8 @@ import seaborn as sns
 import cryodrgn
 from cryodrgn import utils, config
 from cryodrgn.commands import backproject_voxel
-from flexfold import analysis
-from flexfold.core import plot_loss
+from cryoarc import analysis
+from cryoarc.core import plot_loss
 logger = logging.getLogger(__name__)
 
 import pickle
