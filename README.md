@@ -47,3 +47,14 @@ To make sure the particles are well imported, we recommend to do a rigid backpro
 cryodrgn backproject_voxel particles.star --poses particles.pkl --ctf ctf.pkl -o backproject
 ```
 
+## Align embeddings and particles
+Next step is to align the sequence embeddings with the particle images. 
+
+```
+python scripts/compute_initial_pose.py \
+    initial_pose --backproject_path backproject/backproject.mrc \
+    --embedding_pdb_path your/results/dir/embeddings.pdb
+```
+
+This should produce a `initial_pose.pdb` and `initial_pose.pt`. You can verify that the alignment went well by opening `initial_pose.pdb` and your backprojected volume `backproject/backproject.mrc` in a 3D viewer like ChimeraX and make sure both structures superpose.
+
