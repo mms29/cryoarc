@@ -17,8 +17,8 @@ jobs:
         with:
           environment-file: environment.yml
           environment-name: myenv
-          cache-environment: true
-          cache-downloads: true
+          cache-environment: false
+          cache-downloads: false
           init-shell: bash
 
       - name: Show environment info
