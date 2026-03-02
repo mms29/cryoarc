@@ -13,9 +13,26 @@ mamba activate cryoarc
 After the installation, run the following command to install Openfold's dependencies:
 
 ```
-./install_openfold_dependencies.sh
+./utils/install_openfold_dependencies.sh
 ```
 
+Next, downloads the pre-trained Alphafold and Openfold parameters.
+
+```
+./utils/download_alphafold_params.sh
+./utils/download_openfold_params.sh
+```
+
+Finally, to be able to create sequence embeddings, you will need to provide MSAs. If you can provide your own MSAs, you can skip this section. Otherwise, you will have to download genetic databases. The following commands will download the necessary databases (average size ~1.5 TB)
+```
+./utils/download_alphafold_params.sh
+./utils/download_mgnify.sh
+./utils/download_pdb_seqres.sh
+./utils/download_uniref90.sh
+./utils/download_uniref30.sh
+./utils/download_pdb70.sh
+./utils/download_pdb_mmcif.sh
+```
 
 ## Usage
 
