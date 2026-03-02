@@ -1,6 +1,8 @@
 # CryoARC - Cryo-EM Atomic-Resolution Conformations
 
-# Installation
+CryoARC is a continuous heterogeneity analysis method for processing cryo-EM particle images using coevolution.
+
+## Installation
 
 We recommend to install CryoARC using Mamba:
 ```
@@ -15,9 +17,9 @@ After the installation, run the following command to install Openfold's dependen
 ```
 
 
-# Usage
+## Usage
 
-## Create sequence embeddings
+### Create sequence embeddings
 
 Start by placing your amino acid sequences in a single file using FASTA format in a fresh directory `your/sequence/dir`. Select the model weight you want to use. For multimer, we recommend to use `model_1_multimer_v3`. You can refer to the weights description in [Openfold](https://openfold.readthedocs.io/en/latest/Inference.html) documentation. Next use the following script to generate embeddings : 
 
@@ -35,7 +37,7 @@ python scripts/run_pretrained_openfold.py  your/sequence/dir     data/pdb_data/m
 
 This will produce both a PDB/MMCIF file and a `embeddings.pt` file in the `your/results/dir` directory.
 
-## Parsing particle images and metadata
+### Parsing particle images and metadata
 
 You must provide the particle image, particle alignment and CTF parameters using Relion STAR format.
 
@@ -50,7 +52,7 @@ To make sure the particles are well imported, we recommend to do a rigid backpro
 cryodrgn backproject_voxel particles.star --poses particles.pkl --ctf ctf.pkl -o backproject
 ```
 
-## Align embeddings and particles
+### Align embeddings and particles
 Next step is to align the sequence embeddings with the particle images. 
 
 ```
@@ -61,7 +63,7 @@ python scripts/compute_initial_pose.py \
 
 This should produce a `initial_pose.pdb` and `initial_pose.pt`. You can verify that the alignment went well by opening `initial_pose.pdb` and your backprojected volume `backproject/backproject.mrc` in a 3D viewer like ChimeraX and make sure both structures superpose.
 
-## Training CryoARC
+### Training CryoARC
 
 Below is an example of parameters to train cryoARC
 ```
