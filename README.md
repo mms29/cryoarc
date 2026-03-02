@@ -2,11 +2,13 @@
 
 # Installation
 
-Winstall the package with
+We recommend to install CryoARC using Mamba:
 ```
-mamba env create -f cryoarc/environment.yml
+mamba env create -f environment.yml
 mamba activate cryoarc
 ```
+
+After the installation, run the following command to install Openfold's dependencies:
 
 ```
 ./install_openfold_dependencies.sh
@@ -61,6 +63,7 @@ This should produce a `initial_pose.pdb` and `initial_pose.pt`. You can verify t
 
 ## Training CryoARC
 
+Below is an example of parameters to train cryoARC
 ```
 python scripts/train.py \
   particles.star  \
