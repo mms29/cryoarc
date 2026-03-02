@@ -2,6 +2,7 @@
 
 # Installation
 
+Winstall the package with
 ```
 mamba env create -f cryoarc/environment.yml
 mamba activate cryoarc
@@ -57,4 +58,35 @@ python scripts/compute_initial_pose.py \
 ```
 
 This should produce a `initial_pose.pdb` and `initial_pose.pt`. You can verify that the alignment went well by opening `initial_pose.pdb` and your backprojected volume `backproject/backproject.mrc` in a 3D viewer like ChimeraX and make sure both structures superpose.
+
+## Training CryoARC
+
+```
+python scripts/train.py \
+  particles.star  \
+  --poses particles.pkl \
+  --ctf ctf.pkl \
+  --lazy \
+  -n N_EPOCHS \
+  -o OUTPUT_DIR \
+  --pixel_size PIXEL_SIZE \
+  --all_atom \
+  --embedding_path your/results/dir/embeddings.pt  \
+  --initial_pose_path initial_pose.pt \
+  --af_checkpoint_path  resources/params/params_model_1_multimer_v3.npz \
+  --batch-size 4 \
+  --no_blocks_sm 4 \
+  --zdim 4  \
+  --enc-dim 256 \
+  --enc-layers 3 \
+  --dec-dim 256 \
+  --dec-layers 3 \
+  --frozen_angle \
+  --multimer \
+  --lr 8e-5 \
+  --chi_loss_weight 0.01\
+  --viol_loss_weight 0.01\
+  --domain_loss fourier 
+
+```
 
