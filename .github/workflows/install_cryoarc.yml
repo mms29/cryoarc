@@ -1,0 +1,29 @@
+name: Install CryoARC
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup micromamba
+        uses: mamba-org/setup-micromamba@v1
+        with:
+          environment-file: environment.yml
+          environment-name: myenv
+          cache-environment: true
+          cache-downloads: true
+          init-shell: bash
+
+      - name: Show environment info
+        run: |
+          micromamba info
+          python --version
+          which python
