@@ -47,11 +47,10 @@ You have two options:
 
 If you already have MSAs, you can skip database downloads.
 
-### Option B — Download Genetic Databases (~1.5 TB)
+### Option B — Download Genetic Databases
 
 ⚠️ Requires approximately 1.5 TB of storage.
 ```
-./utils/download_alphafold_params.sh
 ./utils/download_mgnify.sh
 ./utils/download_pdb_seqres.sh
 ./utils/download_uniref90.sh
