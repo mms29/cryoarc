@@ -75,6 +75,7 @@ If you plan to use structural templates, also download PDB mmCIF files:
 3. Align embeddings with density  
 4. Train CryoARC  
 5. Analyze results
+6. Heterogeneous reconstruction
 
 ---
 
