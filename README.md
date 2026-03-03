@@ -1,29 +1,55 @@
-# CryoARC - Cryo-EM Atomic-Resolution Conformations
+# CryoARC — Cryo-EM Atomic-Resolution Conformations
 
-CryoARC is a continuous heterogeneity analysis method for processing cryo-EM particle images using coevolution.
+CryoARC is a continuous heterogeneity analysis framework for cryo-EM particle images that integrates sequence coevolutionary information to model atomic-resolution conformational variability.
 
-## Installation
+---
 
-We recommend to install CryoARC using Mamba:
-```
+# Installation
+
+## 1. Create the Conda Environment
+
+We recommend installing CryoARC with **Mamba**:
+
+```bash
 mamba env create -f environment.yml
 mamba activate cryoarc
 ```
 
-After the installation, run the following command to install Openfold's dependencies:
+If you do not have Mamba installed, you can install it through Conda:
 
+```bash
+conda install mamba
+```
+
+## 2. Install OpenFold Dependencies
+
+After activating the environment, run:
 ```
 ./utils/install_openfold_dependencies.sh
 ```
 
-Next, downloads the pre-trained Alphafold and Openfold parameters.
+This installs required dependencies for OpenFold-based embedding generation.
+
+## 3. Download Pretrained Model Parameters
+
+CryoARC uses pretrained Alphafold-based sequence embedding. To download the pre-trained weights, you can use either weights from Deepmind or OpenFold. These parameters are required for generating sequence embeddings.
 
 ```
 ./utils/download_alphafold_params.sh
 ./utils/download_openfold_params.sh
 ```
+## 4. Sequence Embedding Databases (Optional but Usually Required)
 
-Finally, to be able to create sequence embeddings, you will need to provide MSAs. If you can provide your own MSAs, you can skip this section. Otherwise, you will have to download genetic databases. The following commands will download the necessary databases (average size ~1.5 TB)
+To generate embeddings with MSAs (Multiple Sequence Alignments), you need genetic databases.
+
+You have two options:
+### Option A — Provide Your Own MSAs
+
+If you already have MSAs, you can skip database downloads.
+
+### Option B — Download Genetic Databases (~1.5 TB)
+
+⚠️ Requires approximately 1.5 TB of storage.
 ```
 ./utils/download_alphafold_params.sh
 ./utils/download_mgnify.sh
@@ -31,28 +57,53 @@ Finally, to be able to create sequence embeddings, you will need to provide MSAs
 ./utils/download_uniref90.sh
 ./utils/download_uniref30.sh
 ./utils/download_pdb70.sh
+```
+
+If you plan to use structural templates, also download PDB mmCIF files:
+```
 ./utils/download_pdb_mmcif.sh
 ```
 
-## Usage
+---
 
-### Create sequence embeddings
+# Usage
 
-Start by placing your amino acid sequences in a single file using FASTA format in a fresh directory `your/sequence/dir`. Select the model weight you want to use. For multimer, we recommend to use `model_1_multimer_v3`. You can refer to the weights description in [Openfold](https://openfold.readthedocs.io/en/latest/Inference.html) documentation. Next use the following script to generate embeddings : 
+## Workflow Overview
 
+1. Generate sequence embeddings  
+2. Parse cryo-EM particle metadata  
+3. Align embeddings with density  
+4. Train CryoARC  
+5. Analyze results
+
+---
+
+## 1. Generate Sequence Embeddings
+
+Place your amino acid sequences in FASTA format inside a new directory `your/sequence/dir`. Next, select the model weight you want to use. For multimer, we recommend to use `model_1_multimer_v3`. You can refer to the weights description available in [Openfold documentation](https://openfold.readthedocs.io/en/latest/Inference.html) . Here is an example script to genereate sequence embeddings : 
+
+```bash
+python scripts/run_pretrained_openfold.py your/sequence/dir data/pdb_data/mmcifs/ \
+  --uniref90_database_path data/alignment_data/uniref90/uniref90.fasta \
+  --mgnify_database_path data/alignment_data/mgnify/mgy_clusters_2022_05.fa \
+  --pdb_seqres_database_path data/alignment_data/pdb_seqres/pdb_seqres.txt \
+  --uniref30_database_path data/alignment_data/uniref30/UniRef30_2021_03 \
+  --uniprot_database_path data/alignment_data/uniprot/uniprot_trembl.fasta \
+  --jackhmmer_binary_path $CONDA_PREFIX/bin/jackhmmer \
+  --hhblits_binary_path $CONDA_PREFIX/bin/hhblits \
+  --hmmsearch_binary_path $CONDA_PREFIX/bin/hmmsearch \
+  --hmmbuild_binary_path $CONDA_PREFIX/bin/hmmbuild \
+  --kalign_binary_path $CONDA_PREFIX/bin/kalign \
+  --config_preset "model_1_multimer_v3" \
+  --model_device "cuda:0" \
+  --jax_param_path resources/params/params_model_1_multimer_v3.npz \
+  --output_dir your/results/dir \
+  --embeddings_output_path your/results/dir/embeddings.pt
 ```
-python scripts/run_pretrained_openfold.py  your/sequence/dir     data/pdb_data/mmcifs/     \
-  --uniref90_database_path data/alignment_data/uniref90/uniref90.fasta       --mgnify_database_path data/alignment_data/mgnify/mgy_clusters_2022_05.fa  \
-       --pdb_seqres_database_path data/alignment_data/pdb_seqres/pdb_seqres.txt        --uniref30_database_path data/alignment_data/uniref30/UniRef30_2021_03    \
-             --uniprot_database_path  data/alignment_data/uniprot/uniprot_trembl.fasta          --jackhmmer_binary_path $CONDA_PREFIX/bin/jackhmmer   \
-                    --hhblits_binary_path $CONDA_PREFIX/bin/hhblits          --hmmsearch_binary_path $CONDA_PREFIX/bin/hmmsearch    \
-                          --hmmbuild_binary_path $CONDA_PREFIX/bin/hmmbuild          --kalign_binary_path $CONDA_PREFIX/bin/kalign  \
-                                  --config_preset "model_1_multimer_v3"          --model_device "cuda:0"  \
-                                  --jax_param_path resources/params/params_model_1_multimer_v3.npz \
-                                          --output_dir your/results/dir          --embeddings_output_path your/results/dir/embeddings.pt
-```
 
-This will produce both a PDB/MMCIF file and a `embeddings.pt` file in the `your/results/dir` directory.
+**Outputs** 
+- `embeddings.pt` containing the sequence embeddings
+- `embeddings.pdb` the associated structure
 
 ### Parsing particle images and metadata
 
