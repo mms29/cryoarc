@@ -49,4 +49,4 @@ dependencies:
       # Cryodrgn
       - cryodrgn
 
-      - flash-attn 
+      #- flash-attn 
