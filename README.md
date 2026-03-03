@@ -105,7 +105,7 @@ python scripts/run_pretrained_openfold.py your/sequence/dir data/pdb_data/mmcifs
 - `embeddings.pt` containing the sequence embeddings
 - `embeddings.pdb` the associated structure
 
-### Parsing particle images and metadata
+## 2. Parsing particle images and metadata
 
 You must provide the particle image, particle alignment and CTF parameters using Relion STAR format.
 
@@ -120,18 +120,24 @@ To make sure the particles are well imported, we recommend to do a rigid backpro
 cryodrgn backproject_voxel particles.star --poses particles.pkl --ctf ctf.pkl -o backproject
 ```
 
-### Align embeddings and particles
-Next step is to align the sequence embeddings with the particle images. 
+This produce a `backproject/backproject.mrc` density. Open it with a 3D viewer to validate the reconstruction.
 
+## 3. Align embeddings and particles
+Align the predicted structure to the backprojected volume:
 ```
 python scripts/compute_initial_pose.py \
     initial_pose --backproject_path backproject/backproject.mrc \
     --embedding_pdb_path your/results/dir/embeddings.pdb
 ```
+**Output**
 
-This should produce a `initial_pose.pdb` and `initial_pose.pt`. You can verify that the alignment went well by opening `initial_pose.pdb` and your backprojected volume `backproject/backproject.mrc` in a 3D viewer like ChimeraX and make sure both structures superpose.
+ - `initial_pose.pdb`
 
-### Training CryoARC
+ - `initial_pose.pt`
+
+Validate alignment in a 3D viewer (e.g., ChimeraX).
+
+## 4. Training CryoARC
 
 Below is an example of parameters to train cryoARC
 ```
@@ -150,16 +156,46 @@ python scripts/train.py \
   --batch-size 4 \
   --no_blocks_sm 4 \
   --zdim 4  \
-  --enc-dim 256 \
-  --enc-layers 3 \
-  --dec-dim 256 \
-  --dec-layers 3 \
+  --domain real \
+  --encode-mode conv \
+  --enc-dim 32 \
+  --enc-layers 5 \
+  --pair_stack  \
+  --dec-dim 32 \
+  --dec-layers 4 
   --frozen_angle \
   --multimer \
   --lr 8e-5 \
   --chi_loss_weight 0.01\
   --viol_loss_weight 0.01\
-  --domain_loss fourier 
+  --domain_loss fourier \
+  --do-pose-sgd  \
+  --pose-lr 1e-4  \
+  --pretrain 0
 
 ```
+**Output**
+- `weights.*.pkl` model weights
+- `z.*.pkl` latent variable
 
+## 5. Analyze results
+
+The following command goes through the latent variable at the given `EPOCH` and produces densities, atomic structures and corresponding plots. 
+```bash
+python scripts/analyze.py -o OUTPUT_DIR/analysis OUTPUT_DIR EPOCH --pc 2
+```
+
+## 6. Heterogeneous reconstruction
+
+As a validation you can perform heterogeneous reconstruction using our back-projection algorithm.
+The following command produces atomic structures for each latent coordinate.
+```bash
+python scripts/trajectory_from_model.py OUTPUT_DIR OUTPUT_DIR --epoch EPOCH  --batch_size 16 --num_nodes 1 --devices 4
+```
+The next command performs the backprojection.
+```bash
+python scripts/flexible_backprojection.py  --reference OUTPUT_DIR/reference.pdb -o OUTPUT_DIR --chunk   \
+#     --coordinates "OUTPUT_DIR/chunk_*_coordinates.dcd" --indices "OUTPUT_DIR/chunk_*_indices.txt" --coefs OUTPUT_DIR/coefs.pt    \
+#     --batch_size 16 --particles particles.star --poses particles.pkl --ctf ctf.pkl  \
+#     --wiener_constant 1.0 --sigma 1.0 --gaussian_threshold 0.9 --pixel_size PIXEL_SIZE
+```
